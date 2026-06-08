@@ -1,0 +1,282 @@
+const express = require('express');
+const cors = require('cors');
+const cookieParser = require('cookie-parser');
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
+const fs = require('fs');
+const path = require('path');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// Secret key for JWT (change this to something random!)
+const JWT_SECRET = "TAVIAN_SUPER_SECRET_KEY_CHANGE_THIS_12345";
+
+// Data file path
+const DATA_FILE = path.join(__dirname, 'data.json');
+
+// Initialize data file
+if (!fs.existsSync(DATA_FILE)) {
+    fs.writeFileSync(DATA_FILE, JSON.stringify({ users: [] }, null, 2));
+}
+
+// Middleware
+app.use(cors({
+    origin: ['http://localhost:5500', 'http://127.0.0.1:5500', 'http://localhost:3001'],
+    credentials: true
+}));
+app.use(express.json());
+app.use(cookieParser());
+
+// Helper functions
+function readUsers() {
+    const data = fs.readFileSync(DATA_FILE);
+    return JSON.parse(data).users;
+}
+
+function writeUsers(users) {
+    fs.writeFileSync(DATA_FILE, JSON.stringify({ users }, null, 2));
+}
+
+// ============= AUTH MIDDLEWARE =============
+function authenticateToken(req, res, next) {
+    const token = req.cookies.tavian_token;
+    if (!token) {
+        return res.status(401).json({ error: 'Not authenticated' });
+    }
+    try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        req.user = decoded;
+        next();
+    } catch (error) {
+        return res.status(401).json({ error: 'Invalid token' });
+    }
+}
+
+// ============= API ENDPOINTS =============
+
+// GET all users (public - no auth needed)
+app.get('/api/users', (req, res) => {
+    const users = readUsers();
+    const safeUsers = users.map(u => {
+        const { password, ...safe } = u;
+        return safe;
+    });
+    res.json(safeUsers);
+});
+
+// GET current user (from cookie)
+app.get('/api/me', authenticateToken, (req, res) => {
+    const users = readUsers();
+    const user = users.find(u => u.username === req.user.username);
+    if (!user) {
+        return res.status(404).json({ error: 'User not found' });
+    }
+    const { password, ...safe } = user;
+    res.json(safe);
+});
+
+// POST register
+app.post('/api/register', async (req, res) => {
+    const users = readUsers();
+    const { username, email, password, displayName } = req.body;
+    
+    // Check if user exists
+    if (users.find(u => u.username.toLowerCase() === username.toLowerCase())) {
+        return res.status(400).json({ error: 'Username already taken' });
+    }
+    if (users.find(u => u.email.toLowerCase() === email.toLowerCase())) {
+        return res.status(400).json({ error: 'Email already exists' });
+    }
+    
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const isOwner = username.toLowerCase() === 'realgysj';
+    
+    const newUser = {
+        username,
+        email,
+        password: hashedPassword,
+        displayName: displayName || username,
+        tavix: isOwner ? 1000000 : 0,
+        about: '',
+        visits: 0,
+        transactions: [],
+        notifications: [{
+            id: Date.now(),
+            title: "🎉 Welcome to Tavian!",
+            message: isOwner ? "You received 1,000,000 TAVIX as owner!" : "Start earning TAVIX by playing games!",
+            read: false,
+            time: new Date().toISOString()
+        }],
+        savedDevices: [],
+        createdAt: new Date().toISOString()
+    };
+    
+    users.push(newUser);
+    writeUsers(users);
+    
+    // Create JWT token
+    const token = jwt.sign({ username: newUser.username }, JWT_SECRET, { expiresIn: '7d' });
+    
+    // Set secure cookie
+    res.cookie('tavian_token', token, {
+        httpOnly: true,
+        secure: false, // Set to true if using HTTPS
+        sameSite: 'lax',
+        maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+    });
+    
+    const { password: _, ...safe } = newUser;
+    res.status(201).json(safe);
+});
+
+// POST login
+app.post('/api/login', async (req, res) => {
+    const users = readUsers();
+    const { username, password } = req.body;
+    
+    const user = users.find(u => u.username.toLowerCase() === username.toLowerCase());
+    if (!user) {
+        return res.status(401).json({ error: 'Invalid username or password' });
+    }
+    
+    const validPassword = await bcrypt.compare(password, user.password);
+    if (!validPassword) {
+        return res.status(401).json({ error: 'Invalid username or password' });
+    }
+    
+    // Create JWT token
+    const token = jwt.sign({ username: user.username }, JWT_SECRET, { expiresIn: '7d' });
+    
+    // Set secure cookie
+    res.cookie('tavian_token', token, {
+        httpOnly: true,
+        secure: false, // Set to true if using HTTPS
+        sameSite: 'lax',
+        maxAge: 7 * 24 * 60 * 60 * 1000
+    });
+    
+    const { password: _, ...safe } = user;
+    res.json(safe);
+});
+
+// POST logout
+app.post('/api/logout', (req, res) => {
+    res.clearCookie('tavian_token');
+    res.json({ success: true });
+});
+
+// PUT update user (requires auth)
+app.put('/api/user/:username', authenticateToken, async (req, res) => {
+    if (req.user.username !== req.params.username) {
+        return res.status(403).json({ error: 'Forbidden' });
+    }
+    
+    const users = readUsers();
+    const index = users.findIndex(u => u.username === req.params.username);
+    if (index === -1) {
+        return res.status(404).json({ error: 'User not found' });
+    }
+    
+    // Update user (don't allow password change here for security)
+    const allowedUpdates = ['displayName', 'about', 'tavix', 'transactions', 'notifications', 'savedDevices'];
+    for (let key of allowedUpdates) {
+        if (req.body[key] !== undefined) {
+            users[index][key] = req.body[key];
+        }
+    }
+    
+    writeUsers(users);
+    
+    const { password, ...safe } = users[index];
+    res.json(safe);
+});
+
+// POST transaction
+app.post('/api/transaction', authenticateToken, async (req, res) => {
+    const { username, amount, reason, from } = req.body;
+    
+    if (req.user.username !== username) {
+        return res.status(403).json({ error: 'Forbidden' });
+    }
+    
+    const users = readUsers();
+    const index = users.findIndex(u => u.username === username);
+    if (index === -1) {
+        return res.status(404).json({ error: 'User not found' });
+    }
+    
+    if (!users[index].transactions) users[index].transactions = [];
+    users[index].transactions.unshift({
+        id: Date.now(),
+        amount,
+        reason,
+        from: from || null,
+        date: new Date().toISOString()
+    });
+    users[index].tavix = (users[index].tavix || 0) + amount;
+    
+    if (users[index].transactions.length > 50) users[index].transactions.pop();
+    writeUsers(users);
+    
+    res.json({ success: true, newBalance: users[index].tavix });
+});
+
+// POST notification
+app.post('/api/notification', authenticateToken, async (req, res) => {
+    const { username, title, message } = req.body;
+    
+    if (req.user.username !== username) {
+        return res.status(403).json({ error: 'Forbidden' });
+    }
+    
+    const users = readUsers();
+    const index = users.findIndex(u => u.username === username);
+    if (index === -1) {
+        return res.status(404).json({ error: 'User not found' });
+    }
+    
+    if (!users[index].notifications) users[index].notifications = [];
+    users[index].notifications.unshift({
+        id: Date.now(),
+        title,
+        message,
+        read: false,
+        time: new Date().toISOString()
+    });
+    
+    if (users[index].notifications.length > 50) users[index].notifications.pop();
+    writeUsers(users);
+    
+    res.json({ success: true });
+});
+
+// DELETE user account
+app.delete('/api/user/:username', authenticateToken, async (req, res) => {
+    if (req.user.username !== req.params.username) {
+        return res.status(403).json({ error: 'Forbidden' });
+    }
+    
+    let users = readUsers();
+    users = users.filter(u => u.username !== req.params.username);
+    writeUsers(users);
+    
+    res.clearCookie('tavian_token');
+    res.json({ success: true });
+});
+
+// Start server
+app.listen(PORT, () => {
+    console.log(`Tavian backend running on http://localhost:${PORT}`);
+    console.log(`API endpoints:`);
+    console.log(`  GET  /api/users - Get all users`);
+    console.log(`  GET  /api/me - Get current user`);
+    console.log(`  POST /api/register - Register`);
+    console.log(`  POST /api/login - Login`);
+    console.log(`  POST /api/logout - Logout`);
+    console.log(`  PUT  /api/user/:username - Update user`);
+    console.log(`  POST /api/transaction - Add transaction`);
+    console.log(`  POST /api/notification - Add notification`);
+    console.log(`  DELETE /api/user/:username - Delete account`);
+});
