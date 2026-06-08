@@ -9,8 +9,9 @@ const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Secret key for JWT
+// Secret keys
 const JWT_SECRET = "TAVIAN_SUPER_SECRET_KEY_CHANGE_THIS_12345";
+const SECURE_COOKIE_KEY = "tavian_security";
 
 // Data file path
 const DATA_FILE = path.join(__dirname, 'data.json');
@@ -20,38 +21,18 @@ if (!fs.existsSync(DATA_FILE)) {
     fs.writeFileSync(DATA_FILE, JSON.stringify({ users: [] }, null, 2));
 }
 
-// ============= FIXED CORS CONFIGURATION =============
-// Allow all origins for testing (change this in production)
-const allowedOrigins = [
-    'http://localhost:5500',
-    'http://127.0.0.1:5500',
-    'http://localhost:3000',
-    'http://127.0.0.1:3000',
-    'http://localhost:3001',
-    'http://127.0.0.1:3001',
-    'https://tavian-app.onrender.com',
-    'null' // for file:// protocol
-];
-
+// ============= CORS CONFIGURATION =============
 app.use(cors({
     origin: function(origin, callback) {
-        // Allow requests with no origin (like mobile apps or curl)
-        if (!origin) return callback(null, true);
-        if (allowedOrigins.indexOf(origin) !== -1 || true) { // true = allow all for testing
-            callback(null, true);
-        } else {
-            console.log('Origin not allowed:', origin);
-            callback(null, true); // Still allow for testing
-        }
+        // Allow all origins for testing
+        callback(null, true);
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
     allowedHeaders: ['Content-Type', 'Authorization', 'Cookie', 'X-Requested-With']
 }));
 
-// Handle preflight requests
 app.options('*', cors());
-
 app.use(express.json());
 app.use(cookieParser());
 
@@ -65,12 +46,46 @@ function writeUsers(users) {
     fs.writeFileSync(DATA_FILE, JSON.stringify({ users }, null, 2));
 }
 
+// Generate a secure session token for a user
+function generateSecureToken(username) {
+    // Create a token that includes username and a timestamp
+    const payload = {
+        username: username,
+        timestamp: Date.now(),
+        nonce: Math.random().toString(36).substring(2, 15)
+    };
+    return jwt.sign(payload, JWT_SECRET, { expiresIn: '30d' });
+}
+
+// Verify a secure token
+function verifySecureToken(token) {
+    try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        return decoded;
+    } catch (error) {
+        return null;
+    }
+}
+
 // ============= AUTH MIDDLEWARE =============
 function authenticateToken(req, res, next) {
-    const token = req.cookies.tavian_token;
+    // First try to get from Authorization header
+    const authHeader = req.headers.authorization;
+    let token = null;
+    
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+        token = authHeader.substring(7);
+    }
+    
+    // Then try cookie
+    if (!token) {
+        token = req.cookies.tavian_token;
+    }
+    
     if (!token) {
         return res.status(401).json({ error: 'Not authenticated' });
     }
+    
     try {
         const decoded = jwt.verify(token, JWT_SECRET);
         req.user = decoded;
@@ -92,7 +107,7 @@ app.get('/api/users', (req, res) => {
     res.json(safeUsers);
 });
 
-// GET current user
+// GET current user via secure cookie
 app.get('/api/me', authenticateToken, (req, res) => {
     const users = readUsers();
     const user = users.find(u => u.username === req.user.username);
@@ -101,6 +116,41 @@ app.get('/api/me', authenticateToken, (req, res) => {
     }
     const { password, ...safe } = user;
     res.json(safe);
+});
+
+// Auto-login endpoint - checks if user has valid cookie and returns user data
+app.get('/api/auto-login', (req, res) => {
+    const token = req.cookies.tavian_token;
+    
+    if (!token) {
+        return res.status(401).json({ error: 'No session found' });
+    }
+    
+    try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        const users = readUsers();
+        const user = users.find(u => u.username === decoded.username);
+        
+        if (!user) {
+            return res.status(401).json({ error: 'User not found' });
+        }
+        
+        // Refresh the token (extend session)
+        const newToken = generateSecureToken(user.username);
+        res.cookie('tavian_token', newToken, {
+            httpOnly: true,
+            secure: false, // Set to true if using HTTPS
+            sameSite: 'lax',
+            maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+            path: '/'
+        });
+        
+        const { password, ...safe } = user;
+        res.json({ success: true, user: safe });
+    } catch (error) {
+        res.clearCookie('tavian_token');
+        res.status(401).json({ error: 'Invalid session' });
+    }
 });
 
 // POST register
@@ -141,20 +191,23 @@ app.post('/api/register', async (req, res) => {
     users.push(newUser);
     writeUsers(users);
     
-    const token = jwt.sign({ username: newUser.username }, JWT_SECRET, { expiresIn: '7d' });
+    // Generate secure token
+    const token = generateSecureToken(newUser.username);
     
+    // Set secure cookie
     res.cookie('tavian_token', token, {
         httpOnly: true,
         secure: false,
         sameSite: 'lax',
-        maxAge: 7 * 24 * 60 * 60 * 1000
+        maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+        path: '/'
     });
     
     const { password: _, ...safe } = newUser;
     res.status(201).json(safe);
 });
 
-// POST login
+// POST login - sets secure cookie
 app.post('/api/login', async (req, res) => {
     const users = readUsers();
     const { username, password } = req.body;
@@ -169,22 +222,25 @@ app.post('/api/login', async (req, res) => {
         return res.status(401).json({ error: 'Invalid username or password' });
     }
     
-    const token = jwt.sign({ username: user.username }, JWT_SECRET, { expiresIn: '7d' });
+    // Generate secure token
+    const token = generateSecureToken(user.username);
     
+    // Set secure cookie
     res.cookie('tavian_token', token, {
         httpOnly: true,
         secure: false,
         sameSite: 'lax',
-        maxAge: 7 * 24 * 60 * 60 * 1000
+        maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+        path: '/'
     });
     
     const { password: _, ...safe } = user;
     res.json(safe);
 });
 
-// POST logout
+// POST logout - clears the cookie
 app.post('/api/logout', (req, res) => {
-    res.clearCookie('tavian_token');
+    res.clearCookie('tavian_token', { path: '/' });
     res.json({ success: true });
 });
 
@@ -282,11 +338,11 @@ app.delete('/api/user/:username', authenticateToken, async (req, res) => {
     users = users.filter(u => u.username !== req.params.username);
     writeUsers(users);
     
-    res.clearCookie('tavian_token');
+    res.clearCookie('tavian_token', { path: '/' });
     res.json({ success: true });
 });
 
-// Simple test endpoint
+// Health check
 app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
@@ -298,6 +354,7 @@ app.listen(PORT, () => {
     console.log(`  GET  /api/health - Health check`);
     console.log(`  GET  /api/users - Get all users`);
     console.log(`  GET  /api/me - Get current user`);
+    console.log(`  GET  /api/auto-login - Auto-login via cookie`);
     console.log(`  POST /api/register - Register`);
     console.log(`  POST /api/login - Login`);
     console.log(`  POST /api/logout - Logout`);
