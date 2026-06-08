@@ -11,7 +11,7 @@ const PORT = process.env.PORT || 3000;
 
 // Secret keys
 const JWT_SECRET = "TAVIAN_SUPER_SECRET_KEY_CHANGE_THIS_12345";
-const SECURE_COOKIE_KEY = "tavian_security";
+const HCAPTCHA_SECRET = "ES_3e9f86c0fff2435a9c741ef2d05a438f"; // Your hCaptcha secret key - KEEP THIS SERVER SIDE ONLY!
 
 // Data file path
 const DATA_FILE = path.join(__dirname, 'data.json');
@@ -48,7 +48,6 @@ function writeUsers(users) {
 
 // Generate a secure session token for a user
 function generateSecureToken(username) {
-    // Create a token that includes username and a timestamp
     const payload = {
         username: username,
         timestamp: Date.now(),
@@ -57,19 +56,57 @@ function generateSecureToken(username) {
     return jwt.sign(payload, JWT_SECRET, { expiresIn: '30d' });
 }
 
-// Verify a secure token
-function verifySecureToken(token) {
+// ============= hCaptcha Verification =============
+async function verifyHCaptcha(hcaptchaResponse) {
+    if (!hcaptchaResponse) return false;
+    
     try {
-        const decoded = jwt.verify(token, JWT_SECRET);
-        return decoded;
+        const https = require('https');
+        const querystring = require('querystring');
+        
+        const postData = querystring.stringify({
+            secret: HCAPTCHA_SECRET,
+            response: hcaptchaResponse
+        });
+        
+        const options = {
+            hostname: 'hcaptcha.com',
+            port: 443,
+            path: '/siteverify',
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Content-Length': Buffer.byteLength(postData)
+            }
+        };
+        
+        const result = await new Promise((resolve, reject) => {
+            const req = https.request(options, (res) => {
+                let data = '';
+                res.on('data', (chunk) => { data += chunk; });
+                res.on('end', () => {
+                    try {
+                        const json = JSON.parse(data);
+                        resolve(json);
+                    } catch(e) {
+                        reject(e);
+                    }
+                });
+            });
+            req.on('error', reject);
+            req.write(postData);
+            req.end();
+        });
+        
+        return result.success === true;
     } catch (error) {
-        return null;
+        console.error('hCaptcha verification error:', error);
+        return false;
     }
 }
 
 // ============= AUTH MIDDLEWARE =============
 function authenticateToken(req, res, next) {
-    // First try to get from Authorization header
     const authHeader = req.headers.authorization;
     let token = null;
     
@@ -77,7 +114,6 @@ function authenticateToken(req, res, next) {
         token = authHeader.substring(7);
     }
     
-    // Then try cookie
     if (!token) {
         token = req.cookies.tavian_token;
     }
@@ -118,7 +154,7 @@ app.get('/api/me', authenticateToken, (req, res) => {
     res.json(safe);
 });
 
-// Auto-login endpoint - checks if user has valid cookie and returns user data
+// Auto-login endpoint
 app.get('/api/auto-login', (req, res) => {
     const token = req.cookies.tavian_token;
     
@@ -135,13 +171,12 @@ app.get('/api/auto-login', (req, res) => {
             return res.status(401).json({ error: 'User not found' });
         }
         
-        // Refresh the token (extend session)
         const newToken = generateSecureToken(user.username);
         res.cookie('tavian_token', newToken, {
             httpOnly: true,
-            secure: false, // Set to true if using HTTPS
+            secure: false,
             sameSite: 'lax',
-            maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+            maxAge: 30 * 24 * 60 * 60 * 1000,
             path: '/'
         });
         
@@ -153,10 +188,16 @@ app.get('/api/auto-login', (req, res) => {
     }
 });
 
-// POST register
+// POST register (WITH hCaptcha verification)
 app.post('/api/register', async (req, res) => {
     const users = readUsers();
-    const { username, email, password, displayName } = req.body;
+    const { username, email, password, displayName, hcaptchaResponse } = req.body;
+    
+    // VERIFY hCaptcha FIRST
+    const isCaptchaValid = await verifyHCaptcha(hcaptchaResponse);
+    if (!isCaptchaValid) {
+        return res.status(400).json({ error: 'CAPTCHA verification failed. Please try again.' });
+    }
     
     if (users.find(u => u.username.toLowerCase() === username.toLowerCase())) {
         return res.status(400).json({ error: 'Username already taken' });
@@ -191,15 +232,13 @@ app.post('/api/register', async (req, res) => {
     users.push(newUser);
     writeUsers(users);
     
-    // Generate secure token
     const token = generateSecureToken(newUser.username);
     
-    // Set secure cookie
     res.cookie('tavian_token', token, {
         httpOnly: true,
         secure: false,
         sameSite: 'lax',
-        maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+        maxAge: 30 * 24 * 60 * 60 * 1000,
         path: '/'
     });
     
@@ -207,7 +246,7 @@ app.post('/api/register', async (req, res) => {
     res.status(201).json(safe);
 });
 
-// POST login - sets secure cookie
+// POST login
 app.post('/api/login', async (req, res) => {
     const users = readUsers();
     const { username, password } = req.body;
@@ -222,15 +261,13 @@ app.post('/api/login', async (req, res) => {
         return res.status(401).json({ error: 'Invalid username or password' });
     }
     
-    // Generate secure token
     const token = generateSecureToken(user.username);
     
-    // Set secure cookie
     res.cookie('tavian_token', token, {
         httpOnly: true,
         secure: false,
         sameSite: 'lax',
-        maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+        maxAge: 30 * 24 * 60 * 60 * 1000,
         path: '/'
     });
     
@@ -238,7 +275,7 @@ app.post('/api/login', async (req, res) => {
     res.json(safe);
 });
 
-// POST logout - clears the cookie
+// POST logout
 app.post('/api/logout', (req, res) => {
     res.clearCookie('tavian_token', { path: '/' });
     res.json({ success: true });
@@ -350,12 +387,14 @@ app.get('/api/health', (req, res) => {
 // Start server
 app.listen(PORT, () => {
     console.log(`Tavian backend running on http://localhost:${PORT}`);
+    console.log(`✅ hCaptcha protection enabled`);
+    console.log(`🔒 Secret key is server-side only!`);
     console.log(`API endpoints:`);
     console.log(`  GET  /api/health - Health check`);
     console.log(`  GET  /api/users - Get all users`);
     console.log(`  GET  /api/me - Get current user`);
     console.log(`  GET  /api/auto-login - Auto-login via cookie`);
-    console.log(`  POST /api/register - Register`);
+    console.log(`  POST /api/register - Register (hCaptcha protected)`);
     console.log(`  POST /api/login - Login`);
     console.log(`  POST /api/logout - Logout`);
 });
