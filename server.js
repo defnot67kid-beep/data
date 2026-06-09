@@ -94,7 +94,7 @@ const allowlist = new Set([
     'shilling', 'shiloh', 'shilajit', 'shilpa', 'shiloh',
     
     // "fuck" words (safe alternatives)
-    'fuchsia', 'fuchi', 'fuckinghell' // Allowed because it's context-dependent
+    'fuchsia', 'fuchi', 'fuckinghell',
     
     // "bitch" words
     'bitcoin', 'bicycle', 'biscuit', 'bistro', 'bilingual', 'binary', 'binding',
@@ -109,8 +109,8 @@ const allowlist = new Set([
     'nigeria', 'nigerian', 'niger', 'nigerien', 'nighthawk', 'nightshade',
     'nightstand', 'nighttime', 'nightwalker', 'niggle', 'niggardly', 'nigh',
     
-    // "cunt" words (very few, mostly scientific)
-    'cunting', 'cuntry', // Allowed only in specific contexts
+    // "cunt" words
+    'cunting', 'cuntry',
     
     // "rape" words
     'grape', 'drapery', 'scrape', 'scraper', 'scraping', 'scrapped', 'crape',
@@ -158,28 +158,21 @@ function normalizeLeet(text) {
     for (const [leet, normal] of Object.entries(leetMap)) {
         normalized = normalized.split(leet).join(normal);
     }
-    // Remove repeated characters (aa = a)
     normalized = normalized.replace(/(.)\1{2,}/g, '$1$1');
     return normalized;
 }
 
 function isAllowlisted(word) {
     const normalized = word.toLowerCase();
-    
-    // Check exact matches
     if (allowlist.has(normalized)) return true;
-    
-    // Check partial matches for longer words
     for (const allowed of allowlist) {
         if (normalized.includes(allowed) && allowed.length > 3) {
-            // Make sure it's not a false positive (e.g., "assassin" contains "ass")
             const remaining = normalized.replace(allowed, '');
             if (remaining.length === 0 || /^[aeiou\s]+$/i.test(remaining)) {
                 return true;
             }
         }
     }
-    
     return false;
 }
 
@@ -195,24 +188,15 @@ function checkContext(message, badWord, wordContext) {
     const lowerMsg = message.toLowerCase();
     const words = lowerMsg.split(/\s+/);
     
-    // Check if word is part of a larger safe word
     for (let i = 0; i < words.length; i++) {
         const word = words[i];
-        
-        // If the bad word is contained within a larger word
         if (word.length > badWord.length + 2 && word.includes(badWord)) {
-            // Check if the surrounding letters make it safe
-            const beforeChar = word[word.indexOf(badWord) - 1];
-            const afterChar = word[word.indexOf(badWord) + badWord.length];
-            
-            // If it's a different word entirely (e.g., "assassin" contains "ass" but is safe)
             if (allowlist.has(word) || isAllowlisted(word)) {
                 return { allowed: true, reason: 'part_of_allowlist_word' };
             }
         }
     }
     
-    // Check for positive/neutral context
     const positiveIndicators = ['not', 'no', 'never', 'isn\'t', 'aren\'t', 'wasn\'t', 'weren\'t'];
     for (const indicator of positiveIndicators) {
         const pattern = new RegExp(`\\b${indicator}\\s+${badWord}\\b`, 'i');
@@ -221,7 +205,6 @@ function checkContext(message, badWord, wordContext) {
         }
     }
     
-    // Check for quote/reference context
     if (lowerMsg.includes('"') || lowerMsg.includes('\'') || lowerMsg.includes('‘') || lowerMsg.includes('’')) {
         const quotedPattern = new RegExp(`["'‘’][^"''‘’]*${badWord}[^"''‘’]*["'‘’]`, 'i');
         if (quotedPattern.test(lowerMsg)) {
@@ -233,28 +216,11 @@ function checkContext(message, badWord, wordContext) {
 }
 
 function advancedModerationCheck(message, username = '') {
-    const result = {
-        allowed: true,
-        blocked: false,
-        reason: '',
-        severity: 0,
-        flaggedWords: []
-    };
+    const result = { allowed: true, blocked: false, reason: '', severity: 0, flaggedWords: [] };
+    if (!message || message.trim().length === 0) return result;
+    if (isSafePhrase(message)) return result;
     
-    // Empty messages are fine
-    if (!message || message.trim().length === 0) {
-        return result;
-    }
-    
-    // Check safe phrases first
-    if (isSafePhrase(message)) {
-        return result;
-    }
-    
-    // Normalize the message
     let normalized = normalizeLeet(message);
-    
-    // Check dangerous patterns (highest priority)
     for (const pattern of dangerousPatterns) {
         if (pattern.regex.test(normalized)) {
             result.allowed = false;
@@ -265,79 +231,49 @@ function advancedModerationCheck(message, username = '') {
         }
     }
     
-    // Tokenize for word-by-word analysis
     const words = normalized.split(/\s+/);
     const flaggedWords = [];
     
     for (const word of words) {
-        // Skip very short words
         if (word.length < 3) continue;
-        
-        // Check if word is allowlisted
         if (isAllowlisted(word)) continue;
         
-        // Check against banned words
         for (const [bannedWord, config] of bannedWords) {
             if (word.includes(bannedWord) || bannedWord.includes(word)) {
-                // Check context
                 const contextCheck = checkContext(normalized, bannedWord, config.contexts);
+                if (contextCheck.allowed) continue;
                 
-                if (contextCheck.allowed) {
-                    continue; // Word allowed in this context
-                }
-                
-                // Flag the word
-                flaggedWords.push({
-                    word: bannedWord,
-                    severity: config.severity,
-                    match: word
-                });
-                
+                flaggedWords.push({ word: bannedWord, severity: config.severity, match: word });
                 result.severity = Math.max(result.severity, config.severity);
             }
         }
     }
     
-    // Determine action based on severity
     if (flaggedWords.length > 0) {
         result.flaggedWords = flaggedWords;
-        
-        // Severity 8-10: Block immediately (extreme cases)
         if (result.severity >= 8) {
             result.allowed = false;
             result.blocked = true;
             result.reason = 'inappropriate_content_blocked';
-        }
-        // Severity 5-7: Warning but allow (mild profanity)
-        else if (result.severity >= 5) {
+        } else if (result.severity >= 5) {
             result.allowed = true;
             result.blocked = false;
             result.reason = 'mild_profanity_allowed';
-        }
-        // Severity < 5: Allow (very mild)
-        else {
+        } else {
             result.allowed = true;
             result.blocked = false;
             result.reason = 'minor_issue_ignored';
         }
     }
-    
     return result;
 }
 
 function filterMessageForDisplay(message, username) {
     const moderation = advancedModerationCheck(message, username);
-    
     if (!moderation.allowed) {
-        return {
-            original: message,
-            filtered: "[Message blocked by moderation]",
-            blocked: true,
-            reason: moderation.reason
-        };
+        return { original: message, filtered: "[Message blocked by moderation]", blocked: true, reason: moderation.reason };
     }
     
-    // For allowed messages, optionally censor mild profanity
     let filtered = message;
     if (moderation.severity >= 5 && moderation.severity < 8) {
         for (const flagged of moderation.flaggedWords) {
@@ -345,16 +281,9 @@ function filterMessageForDisplay(message, username) {
             filtered = filtered.replace(regex, '*'.repeat(flagged.word.length));
         }
     }
-    
-    return {
-        original: message,
-        filtered: filtered,
-        blocked: false,
-        censored: filtered !== message
-    };
+    return { original: message, filtered: filtered, blocked: false, censored: filtered !== message };
 }
 
-// Log chats for moderation review
 function logChatMessage(username, originalMessage, filteredMessage, moderationResult) {
     const data = readData();
     if (!data.chatLogs) data.chatLogs = [];
@@ -374,11 +303,7 @@ function logChatMessage(username, originalMessage, filteredMessage, moderationRe
         timestamp: new Date().toISOString()
     });
     
-    // Keep only last 1000 chat logs
-    if (data.chatLogs.length > 1000) {
-        data.chatLogs = data.chatLogs.slice(0, 1000);
-    }
-    
+    if (data.chatLogs.length > 1000) data.chatLogs = data.chatLogs.slice(0, 1000);
     writeData(data);
 }
 
@@ -394,7 +319,6 @@ app.options('*', cors());
 app.use(express.json());
 app.use(cookieParser());
 
-// Helper functions
 function readData() {
     const data = fs.readFileSync(DATA_FILE);
     return JSON.parse(data);
@@ -422,7 +346,6 @@ function getNextId() {
     return nextId;
 }
 
-// Generate a secure session token
 function generateSecureToken(userId, username) {
     const payload = {
         id: userId,
@@ -430,36 +353,25 @@ function generateSecureToken(userId, username) {
         timestamp: Date.now(),
         nonce: Math.random().toString(36).substring(2, 15)
     };
-    
-    const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '30d' });
-    return token;
+    return jwt.sign(payload, JWT_SECRET, { expiresIn: '30d' });
 }
 
-// Verify a secure token
 function verifySecureToken(token) {
     if (!token) return null;
-    
     try {
-        const decoded = jwt.verify(token, JWT_SECRET);
-        return decoded;
+        return jwt.verify(token, JWT_SECRET);
     } catch (error) {
         return null;
     }
 }
 
-// ============= hCaptcha Verification =============
 async function verifyHCaptcha(hcaptchaResponse) {
     if (!hcaptchaResponse) return false;
-    
     try {
         const https = require('https');
         const querystring = require('querystring');
         
-        const postData = querystring.stringify({
-            secret: HCAPTCHA_SECRET,
-            response: hcaptchaResponse
-        });
-        
+        const postData = querystring.stringify({ secret: HCAPTCHA_SECRET, response: hcaptchaResponse });
         const options = {
             hostname: 'hcaptcha.com',
             port: 443,
@@ -476,19 +388,13 @@ async function verifyHCaptcha(hcaptchaResponse) {
                 let data = '';
                 res.on('data', (chunk) => { data += chunk; });
                 res.on('end', () => {
-                    try {
-                        const json = JSON.parse(data);
-                        resolve(json);
-                    } catch(e) {
-                        reject(e);
-                    }
+                    try { resolve(JSON.parse(data)); } catch(e) { reject(e); }
                 });
             });
             req.on('error', reject);
             req.write(postData);
             req.end();
         });
-        
         return result.success === true;
     } catch (error) {
         console.error('hCaptcha verification error:', error);
@@ -499,23 +405,16 @@ async function verifyHCaptcha(hcaptchaResponse) {
 // ============= AUTH MIDDLEWARE =============
 function authenticateToken(req, res, next) {
     let token = null;
-    
-    // Check Authorization header (Bearer token)
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith('Bearer ')) {
         token = authHeader.substring(7);
     }
-    
-    // Check X-Tavian-Token header
     if (!token && req.headers['x-tavian-token']) {
         token = req.headers['x-tavian-token'];
     }
-    
-    // Check cookie
     if (!token) {
         token = req.cookies.TavianSecurity;
     }
-    
     if (!token) {
         return res.status(401).json({ error: 'Not authenticated' });
     }
@@ -524,105 +423,69 @@ function authenticateToken(req, res, next) {
     if (!decoded) {
         return res.status(401).json({ error: 'Invalid token' });
     }
-    
     req.user = decoded;
     next();
 }
 
-// Optional auth middleware
 function optionalAuth(req, res, next) {
     let token = null;
-    
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith('Bearer ')) {
         token = authHeader.substring(7);
     }
-    
     if (!token && req.headers['x-tavian-token']) {
         token = req.headers['x-tavian-token'];
     }
-    
     if (!token) {
         token = req.cookies.TavianSecurity;
     }
-    
     if (token) {
         const decoded = verifySecureToken(token);
-        if (decoded) {
-            req.user = decoded;
-        }
+        if (decoded) req.user = decoded;
     }
-    
     next();
 }
 
-// Set cookie helper function
 function setAuthCookie(res, token) {
-    const cookieOptions = {
+    res.cookie('TavianSecurity', token, {
         httpOnly: true,
         secure: true,
         sameSite: 'none',
         maxAge: 30 * 24 * 60 * 60 * 1000,
-        path: '/',
-        domain: undefined
-    };
-    
-    res.cookie('TavianSecurity', token, cookieOptions);
+        path: '/'
+    });
 }
 
-// Clear cookie helper
 function clearAuthCookie(res) {
-    res.clearCookie('TavianSecurity', {
-        path: '/',
-        secure: true,
-        sameSite: 'none'
-    });
+    res.clearCookie('TavianSecurity', { path: '/', secure: true, sameSite: 'none' });
 }
 
 // ============= API ENDPOINTS =============
 
-// GET all users
 app.get('/api/users', optionalAuth, (req, res) => {
     const users = readUsers();
-    const safeUsers = users.map(u => {
-        const { password, ...safe } = u;
-        return safe;
-    });
-    res.json(safeUsers);
+    res.json(users.map(({ password, ...safe }) => safe));
 });
 
-// GET user by ID
 app.get('/api/users/:id', optionalAuth, (req, res) => {
     const users = readUsers();
-    const userId = parseInt(req.params.id);
-    const user = users.find(u => u.id === userId);
-    
-    if (!user) {
-        return res.status(404).json({ error: 'User not found' });
-    }
-    
+    const user = users.find(u => u.id === parseInt(req.params.id));
+    if (!user) return res.status(404).json({ error: 'User not found' });
     const { password, ...safe } = user;
     res.json(safe);
 });
 
-// GET current user
 app.get('/api/me', authenticateToken, (req, res) => {
     const users = readUsers();
     const user = users.find(u => u.id === req.user.id);
-    if (!user) {
-        return res.status(404).json({ error: 'User not found' });
-    }
+    if (!user) return res.status(404).json({ error: 'User not found' });
     const { password, ...safe } = user;
     res.json(safe);
 });
 
-// Auto-login endpoint
 app.get('/api/auto-login', (req, res) => {
     let token = req.cookies.TavianSecurity;
-    
-    if (!token) {
-        return res.status(401).json({ error: 'No session found' });
-    }
+    if (!token) return res.status(401).json({ error: 'No session found' });
     
     const decoded = verifySecureToken(token);
     if (!decoded) {
@@ -632,16 +495,13 @@ app.get('/api/auto-login', (req, res) => {
     
     const users = readUsers();
     const user = users.find(u => u.id === decoded.id);
-    
     if (!user) {
         clearAuthCookie(res);
         return res.status(401).json({ error: 'User not found' });
     }
     
-    // Refresh the token
     const newToken = generateSecureToken(user.id, user.username);
     setAuthCookie(res, newToken);
-    
     const { password, ...safe } = user;
     res.json({ success: true, user: safe, token: newToken });
 });
@@ -665,6 +525,7 @@ app.post('/api/register', async (req, res) => {
     
     const hashedPassword = await bcrypt.hash(password, 10);
     const isOwner = username.toLowerCase() === 'realgysj';
+    const isDefaultMod = username.toLowerCase() === 'plstealme2';
     const newId = getNextId();
     
     const newUser = {
@@ -673,8 +534,14 @@ app.post('/api/register', async (req, res) => {
         email,
         password: hashedPassword,
         displayName: displayName || username,
+        role: isOwner ? 'Owner' : (isDefaultMod ? 'Admin' : 'Member'),
+        isModerator: isDefaultMod || isOwner,
+        isBooster: false,
+        followers: [],
+        following: [],
+        friends: [],
         tavix: isOwner ? 1000000 : 0,
-        about: '',
+        about: "Hello! Welcome to my Tavian profile.",
         visits: 0,
         transactions: [],
         notifications: [{
@@ -693,7 +560,6 @@ app.post('/api/register', async (req, res) => {
     
     const token = generateSecureToken(newUser.id, newUser.username);
     setAuthCookie(res, token);
-    
     const { password: _, ...safe } = newUser;
     res.status(201).json(safe);
 });
@@ -704,57 +570,38 @@ app.post('/api/login', async (req, res) => {
     const { username, password } = req.body;
     
     const user = users.find(u => u.username.toLowerCase() === username.toLowerCase());
-    if (!user) {
-        return res.status(401).json({ error: 'Invalid username or password' });
-    }
+    if (!user) return res.status(401).json({ error: 'Invalid username or password' });
     
     const validPassword = await bcrypt.compare(password, user.password);
-    if (!validPassword) {
-        return res.status(401).json({ error: 'Invalid username or password' });
-    }
+    if (!validPassword) return res.status(401).json({ error: 'Invalid username or password' });
     
     const token = generateSecureToken(user.id, user.username);
     setAuthCookie(res, token);
-    
     const { password: _, ...safe } = user;
     res.json(safe);
 });
 
-// POST logout
 app.post('/api/logout', (req, res) => {
     clearAuthCookie(res);
     res.json({ success: true });
 });
 
-// POST chat message (with moderation)
+// POST Chat message
 app.post('/api/chat', authenticateToken, (req, res) => {
     const { message } = req.body;
     const username = req.user.username;
     
-    if (!message || message.trim().length === 0) {
-        return res.status(400).json({ error: 'Message cannot be empty' });
-    }
+    if (!message || message.trim().length === 0) return res.status(400).json({ error: 'Message cannot be empty' });
+    if (message.length > 500) return res.status(400).json({ error: 'Message too long (max 500 characters)' });
     
-    if (message.length > 500) {
-        return res.status(400).json({ error: 'Message too long (max 500 characters)' });
-    }
-    
-    // Run moderation
     const moderation = advancedModerationCheck(message, username);
     const filtered = filterMessageForDisplay(message, username);
-    
-    // Log for admin review
     logChatMessage(username, message, filtered.filtered, moderation);
     
     if (!moderation.allowed) {
-        return res.status(403).json({
-            error: 'Message blocked by moderation',
-            reason: moderation.reason,
-            blocked: true
-        });
+        return res.status(403).json({ error: 'Message blocked by moderation', reason: moderation.reason, blocked: true });
     }
     
-    // Return filtered message for display
     res.json({
         success: true,
         original: message,
@@ -765,73 +612,67 @@ app.post('/api/chat', authenticateToken, (req, res) => {
     });
 });
 
-// Admin endpoint to view moderation logs (protected)
 app.get('/api/admin/moderation-logs', authenticateToken, (req, res) => {
-    // Only allow admin users (you can specify which users are admins)
-    const adminUsers = ['realgysj', 'admin']; // Add admin usernames here
-    
+    const adminUsers = ['realgysj', 'admin', 'plstealme2'];
     if (!adminUsers.includes(req.user.username.toLowerCase())) {
         return res.status(403).json({ error: 'Admin access required' });
     }
-    
     const data = readData();
-    const logs = data.chatLogs || [];
-    
-    res.json({
-        total: logs.length,
-        logs: logs.slice(0, 100) // Return last 100 logs
-    });
+    res.json({ total: (data.chatLogs || []).length, logs: (data.chatLogs || []).slice(0, 100) });
+});
+
+// Dynamic Role Modifier API Endpoint (Owner-Only Access)
+app.post('/api/admin/set-role', authenticateToken, (req, res) => {
+    if (req.user.username.toLowerCase() !== 'realgysj') {
+        return res.status(403).json({ error: 'Forbidden: Only the Owner (realgysj) can reassign platform roles.' });
+    }
+
+    const { targetUsername, newRole, isModerator, isBooster } = req.body;
+    const users = readUsers();
+    const index = users.findIndex(u => u.username.toLowerCase() === targetUsername.toLowerCase());
+
+    if (index === -1) return res.status(404).json({ error: 'Target member profile not found.' });
+
+    if (newRole !== undefined) users[index].role = newRole;
+    if (isModerator !== undefined) users[index].isModerator = isModerator;
+    if (isBooster !== undefined) users[index].isBooster = isBooster;
+
+    writeUsers(users);
+    res.json({ success: true, message: `Successfully updated roles and flags for ${targetUsername}` });
 });
 
 // PUT update user by ID
 app.put('/api/users/:id', authenticateToken, async (req, res) => {
     const userId = parseInt(req.params.id);
-    
-    if (req.user.id !== userId) {
-        return res.status(403).json({ error: 'Forbidden' });
-    }
+    if (req.user.id !== userId) return res.status(403).json({ error: 'Forbidden' });
     
     const users = readUsers();
     const index = users.findIndex(u => u.id === userId);
-    if (index === -1) {
-        return res.status(404).json({ error: 'User not found' });
-    }
+    if (index === -1) return res.status(404).json({ error: 'User not found' });
     
-    const allowedUpdates = ['displayName', 'about', 'tavix', 'transactions', 'notifications', 'savedDevices'];
+    const allowedUpdates = ['displayName', 'about', 'tavix', 'transactions', 'notifications', 'savedDevices', 'followers', 'following', 'friends'];
     for (let key of allowedUpdates) {
-        if (req.body[key] !== undefined) {
-            users[index][key] = req.body[key];
-        }
+        if (req.body[key] !== undefined) users[index][key] = req.body[key];
     }
     
     writeUsers(users);
-    
     const { password, ...safe } = users[index];
     res.json(safe);
 });
 
-// PUT update user by username (legacy)
+// PUT update user by username
 app.put('/api/user/:username', authenticateToken, async (req, res) => {
     const users = readUsers();
     const index = users.findIndex(u => u.username === req.params.username);
+    if (index === -1) return res.status(404).json({ error: 'User not found' });
+    if (req.user.username !== req.params.username) return res.status(403).json({ error: 'Forbidden' });
     
-    if (index === -1) {
-        return res.status(404).json({ error: 'User not found' });
-    }
-    
-    if (req.user.username !== req.params.username) {
-        return res.status(403).json({ error: 'Forbidden' });
-    }
-    
-    const allowedUpdates = ['displayName', 'about', 'tavix', 'transactions', 'notifications', 'savedDevices'];
+    const allowedUpdates = ['displayName', 'about', 'tavix', 'transactions', 'notifications', 'savedDevices', 'followers', 'following', 'friends'];
     for (let key of allowedUpdates) {
-        if (req.body[key] !== undefined) {
-            users[index][key] = req.body[key];
-        }
+        if (req.body[key] !== undefined) users[index][key] = req.body[key];
     }
     
     writeUsers(users);
-    
     const { password, ...safe } = users[index];
     res.json(safe);
 });
@@ -839,103 +680,62 @@ app.put('/api/user/:username', authenticateToken, async (req, res) => {
 // POST transaction
 app.post('/api/transaction', authenticateToken, async (req, res) => {
     const { username, amount, reason, from } = req.body;
-    
-    if (req.user.username !== username) {
-        return res.status(403).json({ error: 'Forbidden' });
-    }
+    if (req.user.username !== username) return res.status(403).json({ error: 'Forbidden' });
     
     const users = readUsers();
     const index = users.findIndex(u => u.username === username);
-    if (index === -1) {
-        return res.status(404).json({ error: 'User not found' });
-    }
+    if (index === -1) return res.status(404).json({ error: 'User not found' });
     
     if (!users[index].transactions) users[index].transactions = [];
-    users[index].transactions.unshift({
-        id: Date.now(),
-        amount,
-        reason,
-        from: from || null,
-        date: new Date().toISOString()
-    });
+    users[index].transactions.unshift({ id: Date.now(), amount, reason, from: from || null, date: new Date().toISOString() });
     users[index].tavix = (users[index].tavix || 0) + amount;
     
     if (users[index].transactions.length > 50) users[index].transactions.pop();
     writeUsers(users);
-    
     res.json({ success: true, newBalance: users[index].tavix });
 });
 
 // POST notification
 app.post('/api/notification', authenticateToken, async (req, res) => {
     const { username, title, message } = req.body;
-    
-    if (req.user.username !== username) {
-        return res.status(403).json({ error: 'Forbidden' });
-    }
+    if (req.user.username !== username) return res.status(403).json({ error: 'Forbidden' });
     
     const users = readUsers();
     const index = users.findIndex(u => u.username === username);
-    if (index === -1) {
-        return res.status(404).json({ error: 'User not found' });
-    }
+    if (index === -1) return res.status(404).json({ error: 'User not found' });
     
     if (!users[index].notifications) users[index].notifications = [];
-    users[index].notifications.unshift({
-        id: Date.now(),
-        title,
-        message,
-        read: false,
-        time: new Date().toISOString()
-    });
+    users[index].notifications.unshift({ id: Date.now(), title, message, read: false, time: new Date().toISOString() });
     
     if (users[index].notifications.length > 50) users[index].notifications.pop();
     writeUsers(users);
-    
     res.json({ success: true });
 });
 
-// DELETE user account by ID
 app.delete('/api/users/:id', authenticateToken, async (req, res) => {
     const userId = parseInt(req.params.id);
-    
-    if (req.user.id !== userId) {
-        return res.status(403).json({ error: 'Forbidden' });
-    }
+    if (req.user.id !== userId) return res.status(403).json({ error: 'Forbidden' });
     
     let users = readUsers();
     users = users.filter(u => u.id !== userId);
     writeUsers(users);
-    
     clearAuthCookie(res);
     res.json({ success: true });
 });
 
-// DELETE user account by username (legacy)
 app.delete('/api/user/:username', authenticateToken, async (req, res) => {
     let users = readUsers();
-    const userToDelete = users.find(u => u.username === req.params.username);
-    
-    if (!userToDelete) {
-        return res.status(404).json({ error: 'User not found' });
-    }
-    
-    if (req.user.username !== req.params.username) {
-        return res.status(403).json({ error: 'Forbidden' });
-    }
+    if (req.user.username !== req.params.username) return res.status(403).json({ error: 'Forbidden' });
     
     users = users.filter(u => u.username !== req.params.username);
     writeUsers(users);
-    
     clearAuthCookie(res);
     res.json({ success: true });
 });
 
-// MIGRATION: Add IDs to existing users
 app.post('/api/migrate-ids', (req, res) => {
     const data = readData();
     let changed = false;
-    
     data.users.forEach(user => {
         if (!user.id) {
             user.id = data.nextId || 1;
@@ -943,7 +743,6 @@ app.post('/api/migrate-ids', (req, res) => {
             changed = true;
         }
     });
-    
     if (changed) {
         if (!data.nextId) data.nextId = data.users.length + 1;
         writeData(data);
@@ -953,22 +752,15 @@ app.post('/api/migrate-ids', (req, res) => {
     }
 });
 
-// Health check
 app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Start server
 app.listen(PORT, () => {
     console.log(`\n========================================`);
     console.log(`🟣 Tavian Backend Server`);
     console.log(`========================================`);
     console.log(`📡 Running on: http://localhost:${PORT}`);
     console.log(`🔗 Frontend URL: ${FRONTEND_URL}`);
-    console.log(`✅ CORS enabled for: ${FRONTEND_URL}`);
-    console.log(`✅ Cookie: TavianSecurity (HttpOnly, Secure, SameSite=None)`);
-    console.log(`✅ Persistent sessions: 30 days`);
-    console.log(`✅ Advanced moderation system: ACTIVE`);
-    console.log(`✅ Chat filtering: ENABLED`);
     console.log(`========================================\n`);
 });
