@@ -13,6 +13,9 @@ const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || "TAVIAN_SUPER_SECRET_KEY_CHANGE_THIS_12345";
 const HCAPTCHA_SECRET = process.env.HCAPTCHA_SECRET || "ES_3e9f86c0fff2435a9c741ef2d05a438f";
 
+// Frontend URL (Netlify)
+const FRONTEND_URL = process.env.FRONTEND_URL || "https://tavian.netlify.app";
+
 // Data file path
 const DATA_FILE = path.join(__dirname, 'data.json');
 
@@ -23,10 +26,7 @@ if (!fs.existsSync(DATA_FILE)) {
 
 // ============= CORS CONFIGURATION =============
 app.use(cors({
-    origin: function(origin, callback) {
-        // Allow all origins for development
-        callback(null, true);
-    },
+    origin: [FRONTEND_URL, 'http://localhost:3000', 'http://localhost:5500', 'http://127.0.0.1:5500'],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
     allowedHeaders: ['Content-Type', 'Authorization', 'Cookie', 'X-Requested-With', 'X-Tavian-Token']
@@ -64,7 +64,7 @@ function getNextId() {
     return nextId;
 }
 
-// Generate a secure session token (only for authenticated users)
+// Generate a secure session token
 function generateSecureToken(userId, username) {
     const payload = {
         id: userId,
@@ -73,7 +73,6 @@ function generateSecureToken(userId, username) {
         nonce: Math.random().toString(36).substring(2, 15)
     };
     
-    // Generate JWT with 30 day expiry
     const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '30d' });
     return token;
 }
@@ -156,12 +155,7 @@ function authenticateToken(req, res, next) {
     
     // Check cookie
     if (!token) {
-        token = req.cookies.tavian_token;
-    }
-    
-    // Check for TAVIOSECURITY cookie
-    if (!token && req.cookies.TAVIOSECURITY) {
-        token = req.cookies.TAVIOSECURITY;
+        token = req.cookies.TavianSecurity;
     }
     
     if (!token) {
@@ -177,7 +171,7 @@ function authenticateToken(req, res, next) {
     next();
 }
 
-// Optional auth middleware (doesn't require authentication)
+// Optional auth middleware
 function optionalAuth(req, res, next) {
     let token = null;
     
@@ -191,11 +185,7 @@ function optionalAuth(req, res, next) {
     }
     
     if (!token) {
-        token = req.cookies.tavian_token;
-    }
-    
-    if (!token && req.cookies.TAVIOSECURITY) {
-        token = req.cookies.TAVIOSECURITY;
+        token = req.cookies.TavianSecurity;
     }
     
     if (token) {
@@ -208,9 +198,32 @@ function optionalAuth(req, res, next) {
     next();
 }
 
+// Set cookie helper function (consistent across all endpoints)
+function setAuthCookie(res, token) {
+    const cookieOptions = {
+        httpOnly: true,
+        secure: true, // Must be true for HTTPS (Netlify uses HTTPS)
+        sameSite: 'none', // Required for cross-domain cookies
+        maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+        path: '/',
+        domain: undefined // Don't set domain for cross-domain
+    };
+    
+    res.cookie('TavianSecurity', token, cookieOptions);
+}
+
+// Clear cookie helper
+function clearAuthCookie(res) {
+    res.clearCookie('TavianSecurity', {
+        path: '/',
+        secure: true,
+        sameSite: 'none'
+    });
+}
+
 // ============= API ENDPOINTS =============
 
-// GET all users (public)
+// GET all users
 app.get('/api/users', optionalAuth, (req, res) => {
     const users = readUsers();
     const safeUsers = users.map(u => {
@@ -220,7 +233,7 @@ app.get('/api/users', optionalAuth, (req, res) => {
     res.json(safeUsers);
 });
 
-// GET user by ID (public)
+// GET user by ID
 app.get('/api/users/:id', optionalAuth, (req, res) => {
     const users = readUsers();
     const userId = parseInt(req.params.id);
@@ -234,7 +247,7 @@ app.get('/api/users/:id', optionalAuth, (req, res) => {
     res.json(safe);
 });
 
-// GET current user (requires auth)
+// GET current user
 app.get('/api/me', authenticateToken, (req, res) => {
     const users = readUsers();
     const user = users.find(u => u.id === req.user.id);
@@ -245,18 +258,9 @@ app.get('/api/me', authenticateToken, (req, res) => {
     res.json(safe);
 });
 
-// Auto-login endpoint - refreshes session if valid token exists
+// Auto-login endpoint
 app.get('/api/auto-login', (req, res) => {
-    let token = null;
-    
-    // Check various token sources
-    token = req.cookies.tavian_token;
-    if (!token && req.cookies.TAVIOSECURITY) {
-        token = req.cookies.TAVIOSECURITY;
-    }
-    if (!token && req.headers['x-tavian-token']) {
-        token = req.headers['x-tavian-token'];
-    }
+    let token = req.cookies.TavianSecurity;
     
     if (!token) {
         return res.status(401).json({ error: 'No session found' });
@@ -264,8 +268,7 @@ app.get('/api/auto-login', (req, res) => {
     
     const decoded = verifySecureToken(token);
     if (!decoded) {
-        res.clearCookie('tavian_token', { path: '/' });
-        res.clearCookie('TAVIOSECURITY', { path: '/' });
+        clearAuthCookie(res);
         return res.status(401).json({ error: 'Invalid session' });
     }
     
@@ -273,47 +276,28 @@ app.get('/api/auto-login', (req, res) => {
     const user = users.find(u => u.id === decoded.id);
     
     if (!user) {
-        res.clearCookie('tavian_token', { path: '/' });
-        res.clearCookie('TAVIOSECURITY', { path: '/' });
+        clearAuthCookie(res);
         return res.status(401).json({ error: 'User not found' });
     }
     
-    // Refresh the token (extend expiry)
+    // Refresh the token
     const newToken = generateSecureToken(user.id, user.username);
-    
-    // Set cookies
-    res.cookie('tavian_token', newToken, {
-        httpOnly: true,
-        secure: false, // Set to true if using HTTPS
-        sameSite: 'lax',
-        maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
-        path: '/'
-    });
-    
-    res.cookie('TAVIOSECURITY', newToken, {
-        httpOnly: true,
-        secure: false,
-        sameSite: 'lax',
-        maxAge: 30 * 24 * 60 * 60 * 1000,
-        path: '/'
-    });
+    setAuthCookie(res, newToken);
     
     const { password, ...safe } = user;
     res.json({ success: true, user: safe, token: newToken });
 });
 
-// POST register - creates new user account
+// POST register
 app.post('/api/register', async (req, res) => {
     const users = readUsers();
     const { username, email, password, displayName, hcaptchaResponse } = req.body;
     
-    // Verify hCaptcha
     const isCaptchaValid = await verifyHCaptcha(hcaptchaResponse);
     if (!isCaptchaValid) {
         return res.status(400).json({ error: 'CAPTCHA verification failed. Please try again.' });
     }
     
-    // Check for existing user
     if (users.find(u => u.username.toLowerCase() === username.toLowerCase())) {
         return res.status(400).json({ error: 'Username already taken' });
     }
@@ -349,31 +333,14 @@ app.post('/api/register', async (req, res) => {
     users.push(newUser);
     writeUsers(users);
     
-    // Generate auth token for the new user
     const token = generateSecureToken(newUser.id, newUser.username);
-    
-    // Set cookies
-    res.cookie('tavian_token', token, {
-        httpOnly: true,
-        secure: false,
-        sameSite: 'lax',
-        maxAge: 30 * 24 * 60 * 60 * 1000,
-        path: '/'
-    });
-    
-    res.cookie('TAVIOSECURITY', token, {
-        httpOnly: true,
-        secure: false,
-        sameSite: 'lax',
-        maxAge: 30 * 24 * 60 * 60 * 1000,
-        path: '/'
-    });
+    setAuthCookie(res, token);
     
     const { password: _, ...safe } = newUser;
     res.status(201).json(safe);
 });
 
-// POST login - authenticates user and creates session
+// POST login
 app.post('/api/login', async (req, res) => {
     const users = readUsers();
     const { username, password } = req.body;
@@ -388,34 +355,16 @@ app.post('/api/login', async (req, res) => {
         return res.status(401).json({ error: 'Invalid username or password' });
     }
     
-    // Generate auth token
     const token = generateSecureToken(user.id, user.username);
-    
-    // Set cookies
-    res.cookie('tavian_token', token, {
-        httpOnly: true,
-        secure: false,
-        sameSite: 'lax',
-        maxAge: 30 * 24 * 60 * 60 * 1000,
-        path: '/'
-    });
-    
-    res.cookie('TAVIOSECURITY', token, {
-        httpOnly: true,
-        secure: false,
-        sameSite: 'lax',
-        maxAge: 30 * 24 * 60 * 60 * 1000,
-        path: '/'
-    });
+    setAuthCookie(res, token);
     
     const { password: _, ...safe } = user;
     res.json(safe);
 });
 
-// POST logout - clears session
+// POST logout
 app.post('/api/logout', (req, res) => {
-    res.clearCookie('tavian_token', { path: '/' });
-    res.clearCookie('TAVIOSECURITY', { path: '/' });
+    clearAuthCookie(res);
     res.json({ success: true });
 });
 
@@ -472,7 +421,7 @@ app.put('/api/user/:username', authenticateToken, async (req, res) => {
     res.json(safe);
 });
 
-// POST transaction - add transaction record
+// POST transaction
 app.post('/api/transaction', authenticateToken, async (req, res) => {
     const { username, amount, reason, from } = req.body;
     
@@ -496,14 +445,13 @@ app.post('/api/transaction', authenticateToken, async (req, res) => {
     });
     users[index].tavix = (users[index].tavix || 0) + amount;
     
-    // Keep only last 50 transactions
     if (users[index].transactions.length > 50) users[index].transactions.pop();
     writeUsers(users);
     
     res.json({ success: true, newBalance: users[index].tavix });
 });
 
-// POST notification - add notification
+// POST notification
 app.post('/api/notification', authenticateToken, async (req, res) => {
     const { username, title, message } = req.body;
     
@@ -526,7 +474,6 @@ app.post('/api/notification', authenticateToken, async (req, res) => {
         time: new Date().toISOString()
     });
     
-    // Keep only last 50 notifications
     if (users[index].notifications.length > 50) users[index].notifications.pop();
     writeUsers(users);
     
@@ -545,8 +492,7 @@ app.delete('/api/users/:id', authenticateToken, async (req, res) => {
     users = users.filter(u => u.id !== userId);
     writeUsers(users);
     
-    res.clearCookie('tavian_token', { path: '/' });
-    res.clearCookie('TAVIOSECURITY', { path: '/' });
+    clearAuthCookie(res);
     res.json({ success: true });
 });
 
@@ -566,12 +512,11 @@ app.delete('/api/user/:username', authenticateToken, async (req, res) => {
     users = users.filter(u => u.username !== req.params.username);
     writeUsers(users);
     
-    res.clearCookie('tavian_token', { path: '/' });
-    res.clearCookie('TAVIOSECURITY', { path: '/' });
+    clearAuthCookie(res);
     res.json({ success: true });
 });
 
-// MIGRATION: Add IDs to existing users (run once)
+// MIGRATION: Add IDs to existing users
 app.post('/api/migrate-ids', (req, res) => {
     const data = readData();
     let changed = false;
@@ -604,25 +549,9 @@ app.listen(PORT, () => {
     console.log(`🟣 Tavian Backend Server`);
     console.log(`========================================`);
     console.log(`📡 Running on: http://localhost:${PORT}`);
-    console.log(`✅ hCaptcha protection: ENABLED`);
-    console.log(`✅ User ID system: ACTIVE`);
+    console.log(`🔗 Frontend URL: ${FRONTEND_URL}`);
+    console.log(`✅ CORS enabled for: ${FRONTEND_URL}`);
+    console.log(`✅ Cookie: TavianSecurity (HttpOnly, Secure, SameSite=None)`);
     console.log(`✅ Persistent sessions: 30 days`);
-    console.log(`✅ Auth tokens: JWT (HTTP-only cookies)`);
-    console.log(`❌ Guest tokens: DISABLED`);
-    console.log(`========================================\n`);
-    console.log(`🔐 API Endpoints:`);
-    console.log(`   GET    /api/health - Health check`);
-    console.log(`   GET    /api/users - Get all users`);
-    console.log(`   GET    /api/users/:id - Get user by ID`);
-    console.log(`   GET    /api/me - Get current user (auth required)`);
-    console.log(`   GET    /api/auto-login - Auto-login (auth required)`);
-    console.log(`   POST   /api/register - Register new user`);
-    console.log(`   POST   /api/login - Login user`);
-    console.log(`   POST   /api/logout - Logout user`);
-    console.log(`   PUT    /api/users/:id - Update user (auth required)`);
-    console.log(`   DELETE /api/users/:id - Delete user (auth required)`);
-    console.log(`   POST   /api/transaction - Add transaction (auth required)`);
-    console.log(`   POST   /api/notification - Add notification (auth required)`);
-    console.log(`   POST   /api/migrate-ids - Migrate existing users`);
     console.log(`========================================\n`);
 });
