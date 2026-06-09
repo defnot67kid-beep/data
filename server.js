@@ -11,20 +11,19 @@ const PORT = process.env.PORT || 3000;
 
 // Secret keys
 const JWT_SECRET = "TAVIAN_SUPER_SECRET_KEY_CHANGE_THIS_12345";
-const HCAPTCHA_SECRET = "ES_3e9f86c0fff2435a9c741ef2d05a438f"; // Your hCaptcha secret key - KEEP THIS SERVER SIDE ONLY!
+const HCAPTCHA_SECRET = "ES_3e9f86c0fff2435a9c741ef2d05a438f"; // Your hCaptcha secret key
 
 // Data file path
 const DATA_FILE = path.join(__dirname, 'data.json');
 
 // Initialize data file
 if (!fs.existsSync(DATA_FILE)) {
-    fs.writeFileSync(DATA_FILE, JSON.stringify({ users: [] }, null, 2));
+    fs.writeFileSync(DATA_FILE, JSON.stringify({ users: [], nextId: 1 }, null, 2));
 }
 
 // ============= CORS CONFIGURATION =============
 app.use(cors({
     origin: function(origin, callback) {
-        // Allow all origins for testing
         callback(null, true);
     },
     credentials: true,
@@ -37,23 +36,52 @@ app.use(express.json());
 app.use(cookieParser());
 
 // Helper functions
-function readUsers() {
+function readData() {
     const data = fs.readFileSync(DATA_FILE);
-    return JSON.parse(data).users;
+    return JSON.parse(data);
+}
+
+function writeData(data) {
+    fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+}
+
+function readUsers() {
+    return readData().users;
 }
 
 function writeUsers(users) {
-    fs.writeFileSync(DATA_FILE, JSON.stringify({ users }, null, 2));
+    const data = readData();
+    data.users = users;
+    writeData(data);
+}
+
+function getNextId() {
+    const data = readData();
+    const nextId = data.nextId || 1;
+    data.nextId = nextId + 1;
+    writeData(data);
+    return nextId;
 }
 
 // Generate a secure session token for a user
-function generateSecureToken(username) {
+function generateSecureToken(userId, username) {
     const payload = {
+        id: userId,
         username: username,
         timestamp: Date.now(),
         nonce: Math.random().toString(36).substring(2, 15)
     };
     return jwt.sign(payload, JWT_SECRET, { expiresIn: '30d' });
+}
+
+// Verify a secure token
+function verifySecureToken(token) {
+    try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        return decoded;
+    } catch (error) {
+        return null;
+    }
 }
 
 // ============= hCaptcha Verification =============
@@ -122,13 +150,13 @@ function authenticateToken(req, res, next) {
         return res.status(401).json({ error: 'Not authenticated' });
     }
     
-    try {
-        const decoded = jwt.verify(token, JWT_SECRET);
-        req.user = decoded;
-        next();
-    } catch (error) {
+    const decoded = verifySecureToken(token);
+    if (!decoded) {
         return res.status(401).json({ error: 'Invalid token' });
     }
+    
+    req.user = decoded;
+    next();
 }
 
 // ============= API ENDPOINTS =============
@@ -143,10 +171,24 @@ app.get('/api/users', (req, res) => {
     res.json(safeUsers);
 });
 
+// GET user by ID
+app.get('/api/users/:id', (req, res) => {
+    const users = readUsers();
+    const userId = parseInt(req.params.id);
+    const user = users.find(u => u.id === userId);
+    
+    if (!user) {
+        return res.status(404).json({ error: 'User not found' });
+    }
+    
+    const { password, ...safe } = user;
+    res.json(safe);
+});
+
 // GET current user via secure cookie
 app.get('/api/me', authenticateToken, (req, res) => {
     const users = readUsers();
-    const user = users.find(u => u.username === req.user.username);
+    const user = users.find(u => u.id === req.user.id);
     if (!user) {
         return res.status(404).json({ error: 'User not found' });
     }
@@ -162,30 +204,32 @@ app.get('/api/auto-login', (req, res) => {
         return res.status(401).json({ error: 'No session found' });
     }
     
-    try {
-        const decoded = jwt.verify(token, JWT_SECRET);
-        const users = readUsers();
-        const user = users.find(u => u.username === decoded.username);
-        
-        if (!user) {
-            return res.status(401).json({ error: 'User not found' });
-        }
-        
-        const newToken = generateSecureToken(user.username);
-        res.cookie('tavian_token', newToken, {
-            httpOnly: true,
-            secure: false,
-            sameSite: 'lax',
-            maxAge: 30 * 24 * 60 * 60 * 1000,
-            path: '/'
-        });
-        
-        const { password, ...safe } = user;
-        res.json({ success: true, user: safe });
-    } catch (error) {
+    const decoded = verifySecureToken(token);
+    if (!decoded) {
         res.clearCookie('tavian_token');
-        res.status(401).json({ error: 'Invalid session' });
+        return res.status(401).json({ error: 'Invalid session' });
     }
+    
+    const users = readUsers();
+    const user = users.find(u => u.id === decoded.id);
+    
+    if (!user) {
+        res.clearCookie('tavian_token');
+        return res.status(401).json({ error: 'User not found' });
+    }
+    
+    // Refresh the token
+    const newToken = generateSecureToken(user.id, user.username);
+    res.cookie('tavian_token', newToken, {
+        httpOnly: true,
+        secure: false,
+        sameSite: 'lax',
+        maxAge: 30 * 24 * 60 * 60 * 1000,
+        path: '/'
+    });
+    
+    const { password, ...safe } = user;
+    res.json({ success: true, user: safe });
 });
 
 // POST register (WITH hCaptcha verification)
@@ -208,8 +252,10 @@ app.post('/api/register', async (req, res) => {
     
     const hashedPassword = await bcrypt.hash(password, 10);
     const isOwner = username.toLowerCase() === 'realgysj';
+    const newId = getNextId();
     
     const newUser = {
+        id: newId,
         username,
         email,
         password: hashedPassword,
@@ -232,7 +278,7 @@ app.post('/api/register', async (req, res) => {
     users.push(newUser);
     writeUsers(users);
     
-    const token = generateSecureToken(newUser.username);
+    const token = generateSecureToken(newUser.id, newUser.username);
     
     res.cookie('tavian_token', token, {
         httpOnly: true,
@@ -261,7 +307,7 @@ app.post('/api/login', async (req, res) => {
         return res.status(401).json({ error: 'Invalid username or password' });
     }
     
-    const token = generateSecureToken(user.username);
+    const token = generateSecureToken(user.id, user.username);
     
     res.cookie('tavian_token', token, {
         httpOnly: true,
@@ -281,16 +327,44 @@ app.post('/api/logout', (req, res) => {
     res.json({ success: true });
 });
 
-// PUT update user
-app.put('/api/user/:username', authenticateToken, async (req, res) => {
-    if (req.user.username !== req.params.username) {
+// PUT update user (by ID)
+app.put('/api/users/:id', authenticateToken, async (req, res) => {
+    const userId = parseInt(req.params.id);
+    
+    if (req.user.id !== userId) {
         return res.status(403).json({ error: 'Forbidden' });
     }
     
     const users = readUsers();
-    const index = users.findIndex(u => u.username === req.params.username);
+    const index = users.findIndex(u => u.id === userId);
     if (index === -1) {
         return res.status(404).json({ error: 'User not found' });
+    }
+    
+    const allowedUpdates = ['displayName', 'about', 'tavix', 'transactions', 'notifications', 'savedDevices'];
+    for (let key of allowedUpdates) {
+        if (req.body[key] !== undefined) {
+            users[index][key] = req.body[key];
+        }
+    }
+    
+    writeUsers(users);
+    
+    const { password, ...safe } = users[index];
+    res.json(safe);
+});
+
+// Keep old endpoint for compatibility
+app.put('/api/user/:username', authenticateToken, async (req, res) => {
+    const users = readUsers();
+    const index = users.findIndex(u => u.username === req.params.username);
+    
+    if (index === -1) {
+        return res.status(404).json({ error: 'User not found' });
+    }
+    
+    if (req.user.username !== req.params.username) {
+        return res.status(403).json({ error: 'Forbidden' });
     }
     
     const allowedUpdates = ['displayName', 'about', 'tavix', 'transactions', 'notifications', 'savedDevices'];
@@ -365,18 +439,62 @@ app.post('/api/notification', authenticateToken, async (req, res) => {
     res.json({ success: true });
 });
 
-// DELETE user account
-app.delete('/api/user/:username', authenticateToken, async (req, res) => {
-    if (req.user.username !== req.params.username) {
+// DELETE user account (by ID)
+app.delete('/api/users/:id', authenticateToken, async (req, res) => {
+    const userId = parseInt(req.params.id);
+    
+    if (req.user.id !== userId) {
         return res.status(403).json({ error: 'Forbidden' });
     }
     
     let users = readUsers();
+    users = users.filter(u => u.id !== userId);
+    writeUsers(users);
+    
+    res.clearCookie('tavian_token', { path: '/' });
+    res.json({ success: true });
+});
+
+// Keep old endpoint for compatibility
+app.delete('/api/user/:username', authenticateToken, async (req, res) => {
+    let users = readUsers();
+    const userToDelete = users.find(u => u.username === req.params.username);
+    
+    if (!userToDelete) {
+        return res.status(404).json({ error: 'User not found' });
+    }
+    
+    if (req.user.username !== req.params.username) {
+        return res.status(403).json({ error: 'Forbidden' });
+    }
+    
     users = users.filter(u => u.username !== req.params.username);
     writeUsers(users);
     
     res.clearCookie('tavian_token', { path: '/' });
     res.json({ success: true });
+});
+
+// MIGRATION: Add IDs to existing users (run once)
+app.post('/api/migrate-ids', (req, res) => {
+    const data = readData();
+    let changed = false;
+    
+    data.users.forEach(user => {
+        if (!user.id) {
+            user.id = data.nextId || 1;
+            data.nextId = (data.nextId || 1) + 1;
+            changed = true;
+        }
+    });
+    
+    if (changed) {
+        if (!data.nextId) data.nextId = data.users.length + 1;
+        writeData(data);
+        res.json({ message: 'IDs added to users', users: data.users.map(u => ({ id: u.id, username: u.username })) });
+    } else {
+        res.json({ message: 'All users already have IDs', users: data.users.map(u => ({ id: u.id, username: u.username })) });
+    }
 });
 
 // Health check
@@ -388,12 +506,15 @@ app.get('/api/health', (req, res) => {
 app.listen(PORT, () => {
     console.log(`Tavian backend running on http://localhost:${PORT}`);
     console.log(`✅ hCaptcha protection enabled`);
+    console.log(`✅ User IDs enabled for #userid-profile URLs`);
     console.log(`🔒 Secret key is server-side only!`);
-    console.log(`API endpoints:`);
+    console.log(`\nAPI endpoints:`);
     console.log(`  GET  /api/health - Health check`);
     console.log(`  GET  /api/users - Get all users`);
+    console.log(`  GET  /api/users/:id - Get user by ID`);
     console.log(`  GET  /api/me - Get current user`);
     console.log(`  GET  /api/auto-login - Auto-login via cookie`);
+    console.log(`  POST /api/migrate-ids - Add IDs to existing users (run once!)`);
     console.log(`  POST /api/register - Register (hCaptcha protected)`);
     console.log(`  POST /api/login - Login`);
     console.log(`  POST /api/logout - Logout`);
