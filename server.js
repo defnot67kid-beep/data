@@ -21,7 +21,365 @@ const DATA_FILE = path.join(__dirname, 'data.json');
 
 // Initialize data file
 if (!fs.existsSync(DATA_FILE)) {
-    fs.writeFileSync(DATA_FILE, JSON.stringify({ users: [], nextId: 1 }, null, 2));
+    fs.writeFileSync(DATA_FILE, JSON.stringify({ users: [], nextId: 1, chatLogs: [] }, null, 2));
+}
+
+// ============= ADVANCED MODERATION SYSTEM =============
+
+// Comprehensive banned words with context awareness
+const bannedWords = new Map([
+    // Severe profanity
+    ['fuck', { severity: 10, contexts: ['sexual', 'insult', 'violent'] }],
+    ['shit', { severity: 7, contexts: ['excretory', 'insult'] }],
+    ['damn', { severity: 3, contexts: ['mild'] }],
+    ['ass', { severity: 5, contexts: ['insult', 'bodypart'] }],
+    ['bitch', { severity: 8, contexts: ['insult', 'misogynistic'] }],
+    ['cunt', { severity: 10, contexts: ['extreme', 'insult'] }],
+    ['dick', { severity: 7, contexts: ['sexual', 'insult'] }],
+    ['pussy', { severity: 8, contexts: ['sexual', 'insult'] }],
+    ['cock', { severity: 8, contexts: ['sexual'] }],
+    ['whore', { severity: 9, contexts: ['sexual', 'insult'] }],
+    ['bastard', { severity: 6, contexts: ['insult'] }],
+    ['slut', { severity: 9, contexts: ['sexual', 'insult'] }],
+    ['nigger', { severity: 10, contexts: ['racist', 'extreme'] }],
+    ['nigga', { severity: 8, contexts: ['racist', 'cultural'] }],
+    ['faggot', { severity: 10, contexts: ['homophobic', 'extreme'] }],
+    ['retard', { severity: 8, contexts: ['ableist', 'insult'] }],
+    ['kys', { severity: 10, contexts: ['violent', 'selfharm'] }],
+    ['kill yourself', { severity: 10, contexts: ['violent', 'selfharm'] }],
+    ['cum', { severity: 8, contexts: ['sexual'] }],
+    ['dildo', { severity: 7, contexts: ['sexual'] }],
+    ['porn', { severity: 6, contexts: ['sexual'] }],
+    ['nude', { severity: 5, contexts: ['sexual'] }],
+    ['anal', { severity: 7, contexts: ['sexual'] }],
+    ['ballsack', { severity: 6, contexts: ['sexual', 'bodypart'] }],
+    ['rape', { severity: 10, contexts: ['violent', 'sexual'] }],
+    ['rapist', { severity: 10, contexts: ['violent', 'sexual'] }],
+    ['motherfucker', { severity: 9, contexts: ['insult', 'extreme'] }],
+    ['fucker', { severity: 8, contexts: ['insult'] }],
+    ['twat', { severity: 7, contexts: ['insult', 'bodypart'] }],
+    ['clit', { severity: 7, contexts: ['sexual', 'bodypart'] }],
+    ['boner', { severity: 6, contexts: ['sexual'] }],
+    ['prick', { severity: 5, contexts: ['insult'] }],
+    ['wanker', { severity: 6, contexts: ['insult'] }],
+    ['bollocks', { severity: 5, contexts: ['mild'] }],
+    ['arsehole', { severity: 7, contexts: ['insult'] }],
+    ['asshole', { severity: 6, contexts: ['insult'] }],
+    ['shithead', { severity: 7, contexts: ['insult'] }],
+    ['dumbass', { severity: 5, contexts: ['insult'] }],
+    
+    // Hate speech
+    ['hitler', { severity: 10, contexts: ['hate', 'historical'] }],
+    ['nazi', { severity: 10, contexts: ['hate', 'historical'] }],
+    ['holocaust', { severity: 9, contexts: ['sensitive'] }],
+    ['white power', { severity: 10, contexts: ['racist', 'hate'] }],
+    ['black power', { severity: 4, contexts: ['political'] }],
+]);
+
+// Comprehensive allowlist - words that sound like bad words but are safe
+const allowlist = new Set([
+    // "ass" words
+    'assassin', 'assassinate', 'assassination', 'assault', 'assemble', 'assembly', 
+    'assist', 'assistant', 'associate', 'association', 'assume', 'assumption', 
+    'assure', 'assurance', 'asset', 'assets', 'assign', 'assignment', 'assistive',
+    'assert', 'assertion', 'assess', 'assessment', 'assimilate', 'assimilation',
+    
+    // "cock" words
+    'cocktail', 'cockatoo', 'cockpit', 'cocksure', 'cocky', 'cockney', 'cockerel',
+    'cockroach', 'cockscomb', 'cockleshell', 'cockfight', 'cockspur',
+    
+    // "shit" words
+    'ship', 'shipping', 'shipment', 'shirt', 'shift', 'shifting', 'shifty',
+    'shingle', 'shinobi', 'shinto', 'shinny', 'shimmer', 'shimmering',
+    'shilling', 'shiloh', 'shilajit', 'shilpa', 'shiloh',
+    
+    // "fuck" words (safe alternatives)
+    'fuchsia', 'fuchi', 'fuckinghell' // Allowed because it's context-dependent
+    
+    // "bitch" words
+    'bitcoin', 'bicycle', 'biscuit', 'bistro', 'bilingual', 'binary', 'binding',
+    'biting', 'bitter', 'bitumen', 'bitwise', 'bitchute', 'bichon', 'bicarbonate',
+    
+    // "damn" words
+    'damage', 'damaging', 'damascus', 'damask', 'damnation', 'damocles',
+    'dampen', 'dampener', 'damsel', 'damson',
+    
+    // "nig" words
+    'night', 'nightmare', 'nightly', 'nightfall', 'nightclub', 'nightingale',
+    'nigeria', 'nigerian', 'niger', 'nigerien', 'nighthawk', 'nightshade',
+    'nightstand', 'nighttime', 'nightwalker', 'niggle', 'niggardly', 'nigh',
+    
+    // "cunt" words (very few, mostly scientific)
+    'cunting', 'cuntry', // Allowed only in specific contexts
+    
+    // "rape" words
+    'grape', 'drapery', 'scrape', 'scraper', 'scraping', 'scrapped', 'crape',
+    'drape', 'trapper', 'trapping', 'crapper', 'rapper', 'rapping',
+    'rapid', 'rapidly', 'rapidity', 'rapier', 'raptor', 'rapture',
+    
+    // "kill" words
+    'skill', 'skilling', 'killingly', 'killdeer', 'killjoy', 'killifish',
+    'killock', 'killingworth', 'killington',
+    
+    // "sex" words
+    'sussex', 'essex', 'wessex', 'middlesex', 'sexes', 'sexism', 'sexist',
+    'sexton', 'sextant', 'sextet', 'sextuplet', 'sextillion',
+]);
+
+// Context-based checkers
+const safePhrases = new Set([
+    'i love this game', 'good game', 'nice shot', 'well played',
+    'how are you', 'im fine', 'thank you', 'thanks', 'please',
+    'sorry', 'my bad', 'good luck', 'have fun', 'enjoying',
+    'beautiful', 'amazing', 'awesome', 'fantastic', 'wonderful'
+]);
+
+const dangerousPatterns = [
+    // Self-harm and violence
+    { regex: /\b(kill\s+yourself|kys|self\s+harm|suicide)\b/i, severity: 10, type: 'selfharm' },
+    { regex: /\b(rape|rapist|molest|pedophile)\b/i, severity: 10, type: 'sexual_violence' },
+    { regex: /\b(bomb|terrorist|jihad|shoot\s+up)\b/i, severity: 10, type: 'terrorism' },
+    
+    // Extreme hate speech
+    { regex: /\b(white\s+supremacy|kkk|klansman|aryan)\b/i, severity: 10, type: 'hatespeech' },
+    { regex: /\b(transphobic|homophobic|misogynistic)\b/i, severity: 9, type: 'hate' },
+];
+
+// Leet speak mapping
+const leetMap = {
+    '0': 'o', '1': 'i', '2': 'z', '3': 'e', '4': 'a', '5': 's', '6': 'g', '7': 't', '8': 'b', '9': 'g',
+    '@': 'a', '!': 'i', '$': 's', '%': 'e', '^': 'n', '&': 'a', '*': 'o', '(': 'c', ')': 'c',
+    '-': '', '_': '', '=': '', '+': '', '[': '', ']': '', '{': '', '}': '', '\\': '', '|': '',
+    ';': '', ':': '', "'": '', '"': '', ',': '', '.': '', '<': '', '>': '', '/': '', '?': '',
+};
+
+function normalizeLeet(text) {
+    let normalized = text.toLowerCase();
+    for (const [leet, normal] of Object.entries(leetMap)) {
+        normalized = normalized.split(leet).join(normal);
+    }
+    // Remove repeated characters (aa = a)
+    normalized = normalized.replace(/(.)\1{2,}/g, '$1$1');
+    return normalized;
+}
+
+function isAllowlisted(word) {
+    const normalized = word.toLowerCase();
+    
+    // Check exact matches
+    if (allowlist.has(normalized)) return true;
+    
+    // Check partial matches for longer words
+    for (const allowed of allowlist) {
+        if (normalized.includes(allowed) && allowed.length > 3) {
+            // Make sure it's not a false positive (e.g., "assassin" contains "ass")
+            const remaining = normalized.replace(allowed, '');
+            if (remaining.length === 0 || /^[aeiou\s]+$/i.test(remaining)) {
+                return true;
+            }
+        }
+    }
+    
+    return false;
+}
+
+function isSafePhrase(message) {
+    const lowerMsg = message.toLowerCase();
+    for (const phrase of safePhrases) {
+        if (lowerMsg.includes(phrase)) return true;
+    }
+    return false;
+}
+
+function checkContext(message, badWord, wordContext) {
+    const lowerMsg = message.toLowerCase();
+    const words = lowerMsg.split(/\s+/);
+    
+    // Check if word is part of a larger safe word
+    for (let i = 0; i < words.length; i++) {
+        const word = words[i];
+        
+        // If the bad word is contained within a larger word
+        if (word.length > badWord.length + 2 && word.includes(badWord)) {
+            // Check if the surrounding letters make it safe
+            const beforeChar = word[word.indexOf(badWord) - 1];
+            const afterChar = word[word.indexOf(badWord) + badWord.length];
+            
+            // If it's a different word entirely (e.g., "assassin" contains "ass" but is safe)
+            if (allowlist.has(word) || isAllowlisted(word)) {
+                return { allowed: true, reason: 'part_of_allowlist_word' };
+            }
+        }
+    }
+    
+    // Check for positive/neutral context
+    const positiveIndicators = ['not', 'no', 'never', 'isn\'t', 'aren\'t', 'wasn\'t', 'weren\'t'];
+    for (const indicator of positiveIndicators) {
+        const pattern = new RegExp(`\\b${indicator}\\s+${badWord}\\b`, 'i');
+        if (pattern.test(lowerMsg)) {
+            return { allowed: true, reason: 'negation_context' };
+        }
+    }
+    
+    // Check for quote/reference context
+    if (lowerMsg.includes('"') || lowerMsg.includes('\'') || lowerMsg.includes('‘') || lowerMsg.includes('’')) {
+        const quotedPattern = new RegExp(`["'‘’][^"''‘’]*${badWord}[^"''‘’]*["'‘’]`, 'i');
+        if (quotedPattern.test(lowerMsg)) {
+            return { allowed: true, reason: 'quoted_context' };
+        }
+    }
+    
+    return { allowed: false, reason: 'flagged' };
+}
+
+function advancedModerationCheck(message, username = '') {
+    const result = {
+        allowed: true,
+        blocked: false,
+        reason: '',
+        severity: 0,
+        flaggedWords: []
+    };
+    
+    // Empty messages are fine
+    if (!message || message.trim().length === 0) {
+        return result;
+    }
+    
+    // Check safe phrases first
+    if (isSafePhrase(message)) {
+        return result;
+    }
+    
+    // Normalize the message
+    let normalized = normalizeLeet(message);
+    
+    // Check dangerous patterns (highest priority)
+    for (const pattern of dangerousPatterns) {
+        if (pattern.regex.test(normalized)) {
+            result.allowed = false;
+            result.blocked = true;
+            result.reason = pattern.type;
+            result.severity = pattern.severity;
+            return result;
+        }
+    }
+    
+    // Tokenize for word-by-word analysis
+    const words = normalized.split(/\s+/);
+    const flaggedWords = [];
+    
+    for (const word of words) {
+        // Skip very short words
+        if (word.length < 3) continue;
+        
+        // Check if word is allowlisted
+        if (isAllowlisted(word)) continue;
+        
+        // Check against banned words
+        for (const [bannedWord, config] of bannedWords) {
+            if (word.includes(bannedWord) || bannedWord.includes(word)) {
+                // Check context
+                const contextCheck = checkContext(normalized, bannedWord, config.contexts);
+                
+                if (contextCheck.allowed) {
+                    continue; // Word allowed in this context
+                }
+                
+                // Flag the word
+                flaggedWords.push({
+                    word: bannedWord,
+                    severity: config.severity,
+                    match: word
+                });
+                
+                result.severity = Math.max(result.severity, config.severity);
+            }
+        }
+    }
+    
+    // Determine action based on severity
+    if (flaggedWords.length > 0) {
+        result.flaggedWords = flaggedWords;
+        
+        // Severity 8-10: Block immediately (extreme cases)
+        if (result.severity >= 8) {
+            result.allowed = false;
+            result.blocked = true;
+            result.reason = 'inappropriate_content_blocked';
+        }
+        // Severity 5-7: Warning but allow (mild profanity)
+        else if (result.severity >= 5) {
+            result.allowed = true;
+            result.blocked = false;
+            result.reason = 'mild_profanity_allowed';
+        }
+        // Severity < 5: Allow (very mild)
+        else {
+            result.allowed = true;
+            result.blocked = false;
+            result.reason = 'minor_issue_ignored';
+        }
+    }
+    
+    return result;
+}
+
+function filterMessageForDisplay(message, username) {
+    const moderation = advancedModerationCheck(message, username);
+    
+    if (!moderation.allowed) {
+        return {
+            original: message,
+            filtered: "[Message blocked by moderation]",
+            blocked: true,
+            reason: moderation.reason
+        };
+    }
+    
+    // For allowed messages, optionally censor mild profanity
+    let filtered = message;
+    if (moderation.severity >= 5 && moderation.severity < 8) {
+        for (const flagged of moderation.flaggedWords) {
+            const regex = new RegExp(`\\b${flagged.word}\\b`, 'gi');
+            filtered = filtered.replace(regex, '*'.repeat(flagged.word.length));
+        }
+    }
+    
+    return {
+        original: message,
+        filtered: filtered,
+        blocked: false,
+        censored: filtered !== message
+    };
+}
+
+// Log chats for moderation review
+function logChatMessage(username, originalMessage, filteredMessage, moderationResult) {
+    const data = readData();
+    if (!data.chatLogs) data.chatLogs = [];
+    
+    data.chatLogs.unshift({
+        id: Date.now(),
+        username,
+        original: originalMessage,
+        filtered: filteredMessage,
+        moderation: {
+            allowed: moderationResult.allowed,
+            blocked: moderationResult.blocked,
+            reason: moderationResult.reason,
+            severity: moderationResult.severity,
+            flaggedWords: moderationResult.flaggedWords
+        },
+        timestamp: new Date().toISOString()
+    });
+    
+    // Keep only last 1000 chat logs
+    if (data.chatLogs.length > 1000) {
+        data.chatLogs = data.chatLogs.slice(0, 1000);
+    }
+    
+    writeData(data);
 }
 
 // ============= CORS CONFIGURATION =============
@@ -198,15 +556,15 @@ function optionalAuth(req, res, next) {
     next();
 }
 
-// Set cookie helper function (consistent across all endpoints)
+// Set cookie helper function
 function setAuthCookie(res, token) {
     const cookieOptions = {
         httpOnly: true,
-        secure: true, // Must be true for HTTPS (Netlify uses HTTPS)
-        sameSite: 'none', // Required for cross-domain cookies
-        maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+        secure: true,
+        sameSite: 'none',
+        maxAge: 30 * 24 * 60 * 60 * 1000,
         path: '/',
-        domain: undefined // Don't set domain for cross-domain
+        domain: undefined
     };
     
     res.cookie('TavianSecurity', token, cookieOptions);
@@ -366,6 +724,63 @@ app.post('/api/login', async (req, res) => {
 app.post('/api/logout', (req, res) => {
     clearAuthCookie(res);
     res.json({ success: true });
+});
+
+// POST chat message (with moderation)
+app.post('/api/chat', authenticateToken, (req, res) => {
+    const { message } = req.body;
+    const username = req.user.username;
+    
+    if (!message || message.trim().length === 0) {
+        return res.status(400).json({ error: 'Message cannot be empty' });
+    }
+    
+    if (message.length > 500) {
+        return res.status(400).json({ error: 'Message too long (max 500 characters)' });
+    }
+    
+    // Run moderation
+    const moderation = advancedModerationCheck(message, username);
+    const filtered = filterMessageForDisplay(message, username);
+    
+    // Log for admin review
+    logChatMessage(username, message, filtered.filtered, moderation);
+    
+    if (!moderation.allowed) {
+        return res.status(403).json({
+            error: 'Message blocked by moderation',
+            reason: moderation.reason,
+            blocked: true
+        });
+    }
+    
+    // Return filtered message for display
+    res.json({
+        success: true,
+        original: message,
+        filtered: filtered.filtered,
+        censored: filtered.censored,
+        username: username,
+        timestamp: new Date().toISOString()
+    });
+});
+
+// Admin endpoint to view moderation logs (protected)
+app.get('/api/admin/moderation-logs', authenticateToken, (req, res) => {
+    // Only allow admin users (you can specify which users are admins)
+    const adminUsers = ['realgysj', 'admin']; // Add admin usernames here
+    
+    if (!adminUsers.includes(req.user.username.toLowerCase())) {
+        return res.status(403).json({ error: 'Admin access required' });
+    }
+    
+    const data = readData();
+    const logs = data.chatLogs || [];
+    
+    res.json({
+        total: logs.length,
+        logs: logs.slice(0, 100) // Return last 100 logs
+    });
 });
 
 // PUT update user by ID
@@ -553,5 +968,7 @@ app.listen(PORT, () => {
     console.log(`✅ CORS enabled for: ${FRONTEND_URL}`);
     console.log(`✅ Cookie: TavianSecurity (HttpOnly, Secure, SameSite=None)`);
     console.log(`✅ Persistent sessions: 30 days`);
+    console.log(`✅ Advanced moderation system: ACTIVE`);
+    console.log(`✅ Chat filtering: ENABLED`);
     console.log(`========================================\n`);
 });
