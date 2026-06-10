@@ -18,10 +18,34 @@ const FRONTEND_URL = process.env.FRONTEND_URL || "https://tavian.netlify.app";
 
 // Data file path
 const DATA_FILE = path.join(__dirname, 'data.json');
+const GAMES_FILE = path.join(__dirname, 'games.json');
 
 // Initialize data file
 if (!fs.existsSync(DATA_FILE)) {
     fs.writeFileSync(DATA_FILE, JSON.stringify({ users: [], nextId: 1, chatLogs: [] }, null, 2));
+}
+
+// Initialize games file
+if (!fs.existsSync(GAMES_FILE)) {
+    fs.writeFileSync(GAMES_FILE, JSON.stringify({ games: [], nextId: 100000000 }, null, 2));
+}
+
+// ============= GAME HELPER FUNCTIONS =============
+function readGames() {
+    const data = fs.readFileSync(GAMES_FILE);
+    return JSON.parse(data);
+}
+
+function writeGames(data) {
+    fs.writeFileSync(GAMES_FILE, JSON.stringify(data, null, 2));
+}
+
+function generateGameId() {
+    const games = readGames();
+    let newId = games.nextId || 100000000;
+    games.nextId = newId + 1;
+    writeGames(games);
+    return newId.toString();
 }
 
 // ============= ADVANCED MODERATION SYSTEM =============
@@ -313,7 +337,7 @@ app.use(cors({
 }));
 
 app.options('*', cors());
-app.use(express.json());
+app.use(express.json({ limit: '50mb' })); // Increased for thumbnails
 app.use(cookieParser());
 
 // Helper functions
@@ -639,13 +663,12 @@ app.post('/api/logout', (req, res) => {
     res.json({ success: true });
 });
 
-// ============= PROFILE UPDATE ENDPOINTS (FIXED) =============
+// ============= PROFILE UPDATE ENDPOINTS =============
 
-// UPDATE user profile by ID - PATCH (Fully working)
+// UPDATE user profile by ID - PATCH
 app.patch('/api/users/:id/profile', authenticateToken, async (req, res) => {
     const userId = parseInt(req.params.id);
     
-    // Check if user is updating their own profile
     if (req.user.id !== userId) {
         return res.status(403).json({ error: 'Forbidden - Cannot update another user\'s profile' });
     }
@@ -656,7 +679,6 @@ app.patch('/api/users/:id/profile', authenticateToken, async (req, res) => {
         return res.status(404).json({ error: 'User not found' });
     }
     
-    // Allowed fields for profile update
     const allowedUpdates = ['displayName', 'about'];
     let updated = false;
     const updates = {};
@@ -664,10 +686,9 @@ app.patch('/api/users/:id/profile', authenticateToken, async (req, res) => {
     for (let key of allowedUpdates) {
         if (req.body[key] !== undefined) {
             if (typeof req.body[key] === 'string') {
-                // Sanitize input - remove any HTML tags and limit length
                 let value = req.body[key].trim();
-                value = value.replace(/<[^>]*>/g, ''); // Remove HTML tags
-                value = value.substring(0, 500); // Max 500 characters
+                value = value.replace(/<[^>]*>/g, '');
+                value = value.substring(0, 500);
                 
                 users[index][key] = value;
                 updates[key] = value;
@@ -692,7 +713,7 @@ app.patch('/api/users/:id/profile', authenticateToken, async (req, res) => {
     });
 });
 
-// UPDATE user settings by ID (for TAVIX, transactions, notifications)
+// UPDATE user settings by ID
 app.patch('/api/users/:id/settings', authenticateToken, async (req, res) => {
     const userId = parseInt(req.params.id);
     
@@ -864,6 +885,392 @@ app.post('/api/notification', authenticateToken, async (req, res) => {
     res.json({ success: true });
 });
 
+// ============= GAME ENDPOINTS (NEW) =============
+
+// Save/Publish a game
+app.post('/api/games/publish', authenticateToken, async (req, res) => {
+    try {
+        const { 
+            gameName, 
+            description, 
+            genre, 
+            subgenre, 
+            isPublic, 
+            thumbnail, 
+            gameData 
+        } = req.body;
+        
+        if (!gameName || gameName.trim().length === 0) {
+            return res.status(400).json({ error: 'Game name is required' });
+        }
+        
+        if (!gameData) {
+            return res.status(400).json({ error: 'Game data is required' });
+        }
+        
+        const gameId = generateGameId();
+        const games = readGames();
+        
+        const newGame = {
+            id: gameId,
+            name: gameName.trim(),
+            description: description || '',
+            genre: genre || 'Other',
+            subgenre: subgenre || '',
+            isPublic: isPublic !== false,
+            thumbnail: thumbnail || null,
+            gameData: gameData,
+            creatorId: req.user.id,
+            creatorName: req.user.username,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            plays: 0,
+            likes: 0,
+            favorites: 0
+        };
+        
+        games.games.push(newGame);
+        writeGames(games);
+        
+        // Add notification to user
+        const users = readUsers();
+        const userIndex = users.findIndex(u => u.id === req.user.id);
+        if (userIndex !== -1) {
+            if (!users[userIndex].notifications) users[userIndex].notifications = [];
+            users[userIndex].notifications.unshift({
+                id: Date.now(),
+                title: "🎮 Game Published!",
+                message: `Your game "${gameName}" has been published successfully! Game ID: ${gameId}`,
+                read: false,
+                time: new Date().toISOString()
+            });
+            writeUsers(users);
+        }
+        
+        res.json({ 
+            success: true, 
+            gameId: gameId,
+            game: {
+                id: gameId,
+                name: gameName,
+                isPublic: isPublic !== false
+            }
+        });
+        
+    } catch (error) {
+        console.error('Publish error:', error);
+        res.status(500).json({ error: 'Failed to publish game' });
+    }
+});
+
+// Update existing game
+app.put('/api/games/:gameId', authenticateToken, async (req, res) => {
+    try {
+        const gameId = req.params.gameId;
+        const { gameName, description, genre, subgenre, isPublic, thumbnail, gameData } = req.body;
+        
+        const games = readGames();
+        const gameIndex = games.games.findIndex(g => g.id === gameId);
+        
+        if (gameIndex === -1) {
+            return res.status(404).json({ error: 'Game not found' });
+        }
+        
+        const game = games.games[gameIndex];
+        
+        // Check ownership
+        if (game.creatorId !== req.user.id) {
+            return res.status(403).json({ error: 'Not your game' });
+        }
+        
+        if (gameName) game.name = gameName.trim();
+        if (description !== undefined) game.description = description;
+        if (genre) game.genre = genre;
+        if (subgenre !== undefined) game.subgenre = subgenre;
+        if (isPublic !== undefined) game.isPublic = isPublic;
+        if (thumbnail) game.thumbnail = thumbnail;
+        if (gameData) game.gameData = gameData;
+        game.updatedAt = new Date().toISOString();
+        
+        writeGames(games);
+        
+        res.json({ success: true, game });
+        
+    } catch (error) {
+        console.error('Update error:', error);
+        res.status(500).json({ error: 'Failed to update game' });
+    }
+});
+
+// Get all public games (for browsing)
+app.get('/api/games', optionalAuth, async (req, res) => {
+    try {
+        const games = readGames();
+        const publicGames = games.games.filter(g => g.isPublic === true);
+        
+        // Remove heavy gameData from list view
+        const safeGames = publicGames.map(g => ({
+            id: g.id,
+            name: g.name,
+            description: g.description,
+            genre: g.genre,
+            subgenre: g.subgenre,
+            thumbnail: g.thumbnail,
+            creatorName: g.creatorName,
+            creatorId: g.creatorId,
+            createdAt: g.createdAt,
+            updatedAt: g.updatedAt,
+            plays: g.plays,
+            likes: g.likes,
+            favorites: g.favorites
+        }));
+        
+        // Sort by newest first
+        safeGames.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+        
+        res.json(safeGames);
+        
+    } catch (error) {
+        console.error('Fetch games error:', error);
+        res.status(500).json({ error: 'Failed to fetch games' });
+    }
+});
+
+// Get featured/popular games
+app.get('/api/games/featured', optionalAuth, async (req, res) => {
+    try {
+        const games = readGames();
+        const publicGames = games.games.filter(g => g.isPublic === true);
+        
+        const featured = publicGames
+            .sort((a, b) => (b.plays || 0) - (a.plays || 0))
+            .slice(0, 10)
+            .map(g => ({
+                id: g.id,
+                name: g.name,
+                description: g.description,
+                genre: g.genre,
+                thumbnail: g.thumbnail,
+                creatorName: g.creatorName,
+                plays: g.plays,
+                likes: g.likes
+            }));
+        
+        res.json(featured);
+        
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch featured games' });
+    }
+});
+
+// Get single game by ID (full data for playing)
+app.get('/api/games/:gameId', optionalAuth, async (req, res) => {
+    try {
+        const gameId = req.params.gameId;
+        const games = readGames();
+        const game = games.games.find(g => g.id === gameId);
+        
+        if (!game) {
+            return res.status(404).json({ error: 'Game not found' });
+        }
+        
+        // Check privacy
+        if (!game.isPublic && (!req.user || game.creatorId !== req.user.id)) {
+            return res.status(403).json({ error: 'This game is private' });
+        }
+        
+        // Increment play count
+        game.plays = (game.plays || 0) + 1;
+        writeGames(games);
+        
+        // Return full game data (including gameData for playing)
+        res.json({
+            id: game.id,
+            name: game.name,
+            description: game.description,
+            genre: game.genre,
+            subgenre: game.subgenre,
+            isPublic: game.isPublic,
+            thumbnail: game.thumbnail,
+            gameData: game.gameData,
+            creatorName: game.creatorName,
+            creatorId: game.creatorId,
+            createdAt: game.createdAt,
+            updatedAt: game.updatedAt,
+            plays: game.plays,
+            likes: game.likes
+        });
+        
+    } catch (error) {
+        console.error('Fetch game error:', error);
+        res.status(500).json({ error: 'Failed to fetch game' });
+    }
+});
+
+// Get user's own games
+app.get('/api/user/games', authenticateToken, async (req, res) => {
+    try {
+        const games = readGames();
+        const userGames = games.games.filter(g => g.creatorId === req.user.id);
+        
+        const safeGames = userGames.map(g => ({
+            id: g.id,
+            name: g.name,
+            description: g.description,
+            genre: g.genre,
+            subgenre: g.subgenre,
+            isPublic: g.isPublic,
+            thumbnail: g.thumbnail,
+            createdAt: g.createdAt,
+            updatedAt: g.updatedAt,
+            plays: g.plays,
+            likes: g.likes
+        }));
+        
+        // Sort by most recent first
+        safeGames.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+        
+        res.json(safeGames);
+        
+    } catch (error) {
+        console.error('Fetch user games error:', error);
+        res.status(500).json({ error: 'Failed to fetch user games' });
+    }
+});
+
+// Get games by a specific creator
+app.get('/api/games/creator/:creatorId', optionalAuth, async (req, res) => {
+    try {
+        const creatorId = parseInt(req.params.creatorId);
+        const games = readGames();
+        const creatorGames = games.games.filter(g => g.creatorId === creatorId && g.isPublic === true);
+        
+        const safeGames = creatorGames.map(g => ({
+            id: g.id,
+            name: g.name,
+            description: g.description,
+            genre: g.genre,
+            thumbnail: g.thumbnail,
+            plays: g.plays,
+            likes: g.likes,
+            createdAt: g.createdAt
+        }));
+        
+        res.json(safeGames);
+        
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch creator games' });
+    }
+});
+
+// Delete game
+app.delete('/api/games/:gameId', authenticateToken, async (req, res) => {
+    try {
+        const gameId = req.params.gameId;
+        const games = readGames();
+        const gameIndex = games.games.findIndex(g => g.id === gameId);
+        
+        if (gameIndex === -1) {
+            return res.status(404).json({ error: 'Game not found' });
+        }
+        
+        if (games.games[gameIndex].creatorId !== req.user.id) {
+            return res.status(403).json({ error: 'Not your game' });
+        }
+        
+        const deletedGame = games.games[gameIndex];
+        games.games.splice(gameIndex, 1);
+        writeGames(games);
+        
+        res.json({ 
+            success: true, 
+            message: `Game "${deletedGame.name}" deleted successfully` 
+        });
+        
+    } catch (error) {
+        console.error('Delete game error:', error);
+        res.status(500).json({ error: 'Failed to delete game' });
+    }
+});
+
+// Like/unlike a game
+app.post('/api/games/:gameId/like', authenticateToken, async (req, res) => {
+    try {
+        const gameId = req.params.gameId;
+        const games = readGames();
+        const gameIndex = games.games.findIndex(g => g.id === gameId);
+        
+        if (gameIndex === -1) {
+            return res.status(404).json({ error: 'Game not found' });
+        }
+        
+        // Simple like increment (in production, track which users liked)
+        games.games[gameIndex].likes = (games.games[gameIndex].likes || 0) + 1;
+        writeGames(games);
+        
+        res.json({ 
+            success: true, 
+            likes: games.games[gameIndex].likes 
+        });
+        
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to like game' });
+    }
+});
+
+// Search games
+app.get('/api/games/search/:query', optionalAuth, async (req, res) => {
+    try {
+        const query = req.params.query.toLowerCase();
+        const games = readGames();
+        const publicGames = games.games.filter(g => g.isPublic === true);
+        
+        const results = publicGames.filter(g => 
+            g.name.toLowerCase().includes(query) ||
+            g.description.toLowerCase().includes(query) ||
+            g.genre.toLowerCase().includes(query) ||
+            g.creatorName.toLowerCase().includes(query)
+        ).map(g => ({
+            id: g.id,
+            name: g.name,
+            description: g.description,
+            genre: g.genre,
+            thumbnail: g.thumbnail,
+            creatorName: g.creatorName,
+            plays: g.plays
+        }));
+        
+        res.json(results);
+        
+    } catch (error) {
+        res.status(500).json({ error: 'Search failed' });
+    }
+});
+
+// Get games by genre
+app.get('/api/games/genre/:genre', optionalAuth, async (req, res) => {
+    try {
+        const genre = req.params.genre;
+        const games = readGames();
+        const genreGames = games.games.filter(g => g.isPublic === true && g.genre === genre);
+        
+        const results = genreGames.map(g => ({
+            id: g.id,
+            name: g.name,
+            description: g.description,
+            genre: g.genre,
+            thumbnail: g.thumbnail,
+            creatorName: g.creatorName,
+            plays: g.plays
+        }));
+        
+        res.json(results);
+        
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch by genre' });
+    }
+});
+
 // ============= MIGRATION & UTILITY ENDPOINTS =============
 
 // MIGRATION: Add IDs to existing users
@@ -920,10 +1327,31 @@ app.get('/api/debug/user/:id', authenticateToken, (req, res) => {
     });
 });
 
+// Debug - List all games (admin only)
+app.get('/api/admin/games', authenticateToken, (req, res) => {
+    const adminUsers = ['realgysj', 'plstealme2'];
+    
+    if (!adminUsers.includes(req.user.username.toLowerCase())) {
+        return res.status(403).json({ error: 'Admin access required' });
+    }
+    
+    const games = readGames();
+    const gameList = games.games.map(g => ({
+        id: g.id,
+        name: g.name,
+        creatorName: g.creatorName,
+        isPublic: g.isPublic,
+        plays: g.plays,
+        createdAt: g.createdAt
+    }));
+    
+    res.json({ total: gameList.length, games: gameList });
+});
+
 // Start server
 app.listen(PORT, () => {
     console.log(`\n========================================`);
-    console.log(`🟣 Tavian Backend Server (FIXED)`);
+    console.log(`🟣 Tavian Backend Server (UPDATED with Games API)`);
     console.log(`========================================`);
     console.log(`📡 Running on: http://localhost:${PORT}`);
     console.log(`🔗 Frontend URL: ${FRONTEND_URL}`);
@@ -934,5 +1362,15 @@ app.listen(PORT, () => {
     console.log(`✅ Chat filtering: ENABLED`);
     console.log(`✅ Profile updates: WORKING (PATCH /api/users/:id/profile)`);
     console.log(`✅ Allowed updates: displayName, about`);
+    console.log(`✅ GAME API:`);
+    console.log(`   - POST   /api/games/publish      - Publish new game`);
+    console.log(`   - PUT    /api/games/:gameId     - Update game`);
+    console.log(`   - GET    /api/games             - List public games`);
+    console.log(`   - GET    /api/games/featured    - Featured games`);
+    console.log(`   - GET    /api/games/:gameId     - Get game details`);
+    console.log(`   - GET    /api/user/games        - User's games`);
+    console.log(`   - DELETE /api/games/:gameId     - Delete game`);
+    console.log(`   - GET    /api/games/search/:query - Search games`);
+    console.log(`   - GET    /api/games/genre/:genre  - Filter by genre`);
     console.log(`========================================\n`);
 });
