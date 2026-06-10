@@ -18,40 +18,17 @@ const FRONTEND_URL = process.env.FRONTEND_URL || "https://tavian.netlify.app";
 
 // Data file path
 const DATA_FILE = path.join(__dirname, 'data.json');
-const GAMES_FILE = path.join(__dirname, 'games.json');
 
 // Initialize data file
 if (!fs.existsSync(DATA_FILE)) {
     fs.writeFileSync(DATA_FILE, JSON.stringify({ users: [], nextId: 1, chatLogs: [] }, null, 2));
 }
 
-// Initialize games file
-if (!fs.existsSync(GAMES_FILE)) {
-    fs.writeFileSync(GAMES_FILE, JSON.stringify({ games: [], nextId: 100000000 }, null, 2));
-}
-
-// ============= GAME HELPER FUNCTIONS =============
-function readGames() {
-    const data = fs.readFileSync(GAMES_FILE);
-    return JSON.parse(data);
-}
-
-function writeGames(data) {
-    fs.writeFileSync(GAMES_FILE, JSON.stringify(data, null, 2));
-}
-
-function generateGameId() {
-    const games = readGames();
-    let newId = games.nextId || 100000000;
-    games.nextId = newId + 1;
-    writeGames(games);
-    return newId.toString();
-}
-
 // ============= ADVANCED MODERATION SYSTEM =============
 
 // Comprehensive banned words with context awareness
 const bannedWords = new Map([
+    // Severe profanity
     ['fuck', { severity: 10, contexts: ['sexual', 'insult', 'violent'] }],
     ['shit', { severity: 7, contexts: ['excretory', 'insult'] }],
     ['damn', { severity: 3, contexts: ['mild'] }],
@@ -90,6 +67,8 @@ const bannedWords = new Map([
     ['asshole', { severity: 6, contexts: ['insult'] }],
     ['shithead', { severity: 7, contexts: ['insult'] }],
     ['dumbass', { severity: 5, contexts: ['insult'] }],
+    
+    // Hate speech
     ['hitler', { severity: 10, contexts: ['hate', 'historical'] }],
     ['nazi', { severity: 10, contexts: ['hate', 'historical'] }],
     ['holocaust', { severity: 9, contexts: ['sensitive'] }],
@@ -97,23 +76,57 @@ const bannedWords = new Map([
     ['black power', { severity: 4, contexts: ['political'] }],
 ]);
 
+// Comprehensive allowlist - words that sound like bad words but are safe
 const allowlist = new Set([
+    // "ass" words
     'assassin', 'assassinate', 'assassination', 'assault', 'assemble', 'assembly', 
     'assist', 'assistant', 'associate', 'association', 'assume', 'assumption', 
     'assure', 'assurance', 'asset', 'assets', 'assign', 'assignment', 'assistive',
     'assert', 'assertion', 'assess', 'assessment', 'assimilate', 'assimilation',
+    
+    // "cock" words
     'cocktail', 'cockatoo', 'cockpit', 'cocksure', 'cocky', 'cockney', 'cockerel',
     'cockroach', 'cockscomb', 'cockleshell', 'cockfight', 'cockspur',
+    
+    // "shit" words
     'ship', 'shipping', 'shipment', 'shirt', 'shift', 'shifting', 'shifty',
+    'shingle', 'shinobi', 'shinto', 'shinny', 'shimmer', 'shimmering',
+    'shilling', 'shiloh', 'shilajit', 'shilpa', 'shiloh',
+    
+    // "fuck" words (safe alternatives)
+    'fuchsia', 'fuchi', 'fuckinghell' // Allowed because it's context-dependent
+    
+    // "bitch" words
     'bitcoin', 'bicycle', 'biscuit', 'bistro', 'bilingual', 'binary', 'binding',
+    'biting', 'bitter', 'bitumen', 'bitwise', 'bitchute', 'bichon', 'bicarbonate',
+    
+    // "damn" words
     'damage', 'damaging', 'damascus', 'damask', 'damnation', 'damocles',
+    'dampen', 'dampener', 'damsel', 'damson',
+    
+    // "nig" words
     'night', 'nightmare', 'nightly', 'nightfall', 'nightclub', 'nightingale',
     'nigeria', 'nigerian', 'niger', 'nigerien', 'nighthawk', 'nightshade',
+    'nightstand', 'nighttime', 'nightwalker', 'niggle', 'niggardly', 'nigh',
+    
+    // "cunt" words (very few, mostly scientific)
+    'cunting', 'cuntry', // Allowed only in specific contexts
+    
+    // "rape" words
     'grape', 'drapery', 'scrape', 'scraper', 'scraping', 'scrapped', 'crape',
+    'drape', 'trapper', 'trapping', 'crapper', 'rapper', 'rapping',
+    'rapid', 'rapidly', 'rapidity', 'rapier', 'raptor', 'rapture',
+    
+    // "kill" words
     'skill', 'skilling', 'killingly', 'killdeer', 'killjoy', 'killifish',
+    'killock', 'killingworth', 'killington',
+    
+    // "sex" words
     'sussex', 'essex', 'wessex', 'middlesex', 'sexes', 'sexism', 'sexist',
+    'sexton', 'sextant', 'sextet', 'sextuplet', 'sextillion',
 ]);
 
+// Context-based checkers
 const safePhrases = new Set([
     'i love this game', 'good game', 'nice shot', 'well played',
     'how are you', 'im fine', 'thank you', 'thanks', 'please',
@@ -122,16 +135,22 @@ const safePhrases = new Set([
 ]);
 
 const dangerousPatterns = [
+    // Self-harm and violence
     { regex: /\b(kill\s+yourself|kys|self\s+harm|suicide)\b/i, severity: 10, type: 'selfharm' },
     { regex: /\b(rape|rapist|molest|pedophile)\b/i, severity: 10, type: 'sexual_violence' },
     { regex: /\b(bomb|terrorist|jihad|shoot\s+up)\b/i, severity: 10, type: 'terrorism' },
+    
+    // Extreme hate speech
     { regex: /\b(white\s+supremacy|kkk|klansman|aryan)\b/i, severity: 10, type: 'hatespeech' },
     { regex: /\b(transphobic|homophobic|misogynistic)\b/i, severity: 9, type: 'hate' },
 ];
 
+// Leet speak mapping
 const leetMap = {
     '0': 'o', '1': 'i', '2': 'z', '3': 'e', '4': 'a', '5': 's', '6': 'g', '7': 't', '8': 'b', '9': 'g',
     '@': 'a', '!': 'i', '$': 's', '%': 'e', '^': 'n', '&': 'a', '*': 'o', '(': 'c', ')': 'c',
+    '-': '', '_': '', '=': '', '+': '', '[': '', ']': '', '{': '', '}': '', '\\': '', '|': '',
+    ';': '', ':': '', "'": '', '"': '', ',': '', '.': '', '<': '', '>': '', '/': '', '?': '',
 };
 
 function normalizeLeet(text) {
@@ -139,21 +158,28 @@ function normalizeLeet(text) {
     for (const [leet, normal] of Object.entries(leetMap)) {
         normalized = normalized.split(leet).join(normal);
     }
+    // Remove repeated characters (aa = a)
     normalized = normalized.replace(/(.)\1{2,}/g, '$1$1');
     return normalized;
 }
 
 function isAllowlisted(word) {
     const normalized = word.toLowerCase();
+    
+    // Check exact matches
     if (allowlist.has(normalized)) return true;
+    
+    // Check partial matches for longer words
     for (const allowed of allowlist) {
         if (normalized.includes(allowed) && allowed.length > 3) {
+            // Make sure it's not a false positive (e.g., "assassin" contains "ass")
             const remaining = normalized.replace(allowed, '');
             if (remaining.length === 0 || /^[aeiou\s]+$/i.test(remaining)) {
                 return true;
             }
         }
     }
+    
     return false;
 }
 
@@ -169,15 +195,24 @@ function checkContext(message, badWord, wordContext) {
     const lowerMsg = message.toLowerCase();
     const words = lowerMsg.split(/\s+/);
     
+    // Check if word is part of a larger safe word
     for (let i = 0; i < words.length; i++) {
         const word = words[i];
+        
+        // If the bad word is contained within a larger word
         if (word.length > badWord.length + 2 && word.includes(badWord)) {
+            // Check if the surrounding letters make it safe
+            const beforeChar = word[word.indexOf(badWord) - 1];
+            const afterChar = word[word.indexOf(badWord) + badWord.length];
+            
+            // If it's a different word entirely (e.g., "assassin" contains "ass" but is safe)
             if (allowlist.has(word) || isAllowlisted(word)) {
                 return { allowed: true, reason: 'part_of_allowlist_word' };
             }
         }
     }
     
+    // Check for positive/neutral context
     const positiveIndicators = ['not', 'no', 'never', 'isn\'t', 'aren\'t', 'wasn\'t', 'weren\'t'];
     for (const indicator of positiveIndicators) {
         const pattern = new RegExp(`\\b${indicator}\\s+${badWord}\\b`, 'i');
@@ -186,6 +221,7 @@ function checkContext(message, badWord, wordContext) {
         }
     }
     
+    // Check for quote/reference context
     if (lowerMsg.includes('"') || lowerMsg.includes('\'') || lowerMsg.includes('‘') || lowerMsg.includes('’')) {
         const quotedPattern = new RegExp(`["'‘’][^"''‘’]*${badWord}[^"''‘’]*["'‘’]`, 'i');
         if (quotedPattern.test(lowerMsg)) {
@@ -205,16 +241,20 @@ function advancedModerationCheck(message, username = '') {
         flaggedWords: []
     };
     
+    // Empty messages are fine
     if (!message || message.trim().length === 0) {
         return result;
     }
     
+    // Check safe phrases first
     if (isSafePhrase(message)) {
         return result;
     }
     
+    // Normalize the message
     let normalized = normalizeLeet(message);
     
+    // Check dangerous patterns (highest priority)
     for (const pattern of dangerousPatterns) {
         if (pattern.regex.test(normalized)) {
             result.allowed = false;
@@ -225,21 +265,28 @@ function advancedModerationCheck(message, username = '') {
         }
     }
     
+    // Tokenize for word-by-word analysis
     const words = normalized.split(/\s+/);
     const flaggedWords = [];
     
     for (const word of words) {
+        // Skip very short words
         if (word.length < 3) continue;
+        
+        // Check if word is allowlisted
         if (isAllowlisted(word)) continue;
         
+        // Check against banned words
         for (const [bannedWord, config] of bannedWords) {
             if (word.includes(bannedWord) || bannedWord.includes(word)) {
+                // Check context
                 const contextCheck = checkContext(normalized, bannedWord, config.contexts);
                 
                 if (contextCheck.allowed) {
-                    continue;
+                    continue; // Word allowed in this context
                 }
                 
+                // Flag the word
                 flaggedWords.push({
                     word: bannedWord,
                     severity: config.severity,
@@ -251,19 +298,23 @@ function advancedModerationCheck(message, username = '') {
         }
     }
     
+    // Determine action based on severity
     if (flaggedWords.length > 0) {
         result.flaggedWords = flaggedWords;
         
+        // Severity 8-10: Block immediately (extreme cases)
         if (result.severity >= 8) {
             result.allowed = false;
             result.blocked = true;
             result.reason = 'inappropriate_content_blocked';
         }
+        // Severity 5-7: Warning but allow (mild profanity)
         else if (result.severity >= 5) {
             result.allowed = true;
             result.blocked = false;
             result.reason = 'mild_profanity_allowed';
         }
+        // Severity < 5: Allow (very mild)
         else {
             result.allowed = true;
             result.blocked = false;
@@ -286,6 +337,7 @@ function filterMessageForDisplay(message, username) {
         };
     }
     
+    // For allowed messages, optionally censor mild profanity
     let filtered = message;
     if (moderation.severity >= 5 && moderation.severity < 8) {
         for (const flagged of moderation.flaggedWords) {
@@ -302,6 +354,7 @@ function filterMessageForDisplay(message, username) {
     };
 }
 
+// Log chats for moderation review
 function logChatMessage(username, originalMessage, filteredMessage, moderationResult) {
     const data = readData();
     if (!data.chatLogs) data.chatLogs = [];
@@ -321,6 +374,7 @@ function logChatMessage(username, originalMessage, filteredMessage, moderationRe
         timestamp: new Date().toISOString()
     });
     
+    // Keep only last 1000 chat logs
     if (data.chatLogs.length > 1000) {
         data.chatLogs = data.chatLogs.slice(0, 1000);
     }
@@ -337,7 +391,7 @@ app.use(cors({
 }));
 
 app.options('*', cors());
-app.use(express.json({ limit: '50mb' })); // Increased for thumbnails
+app.use(express.json());
 app.use(cookieParser());
 
 // Helper functions
@@ -368,6 +422,7 @@ function getNextId() {
     return nextId;
 }
 
+// Generate a secure session token
 function generateSecureToken(userId, username) {
     const payload = {
         id: userId,
@@ -380,6 +435,7 @@ function generateSecureToken(userId, username) {
     return token;
 }
 
+// Verify a secure token
 function verifySecureToken(token) {
     if (!token) return null;
     
@@ -444,15 +500,18 @@ async function verifyHCaptcha(hcaptchaResponse) {
 function authenticateToken(req, res, next) {
     let token = null;
     
+    // Check Authorization header (Bearer token)
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith('Bearer ')) {
         token = authHeader.substring(7);
     }
     
+    // Check X-Tavian-Token header
     if (!token && req.headers['x-tavian-token']) {
         token = req.headers['x-tavian-token'];
     }
     
+    // Check cookie
     if (!token) {
         token = req.cookies.TavianSecurity;
     }
@@ -470,6 +529,7 @@ function authenticateToken(req, res, next) {
     next();
 }
 
+// Optional auth middleware
 function optionalAuth(req, res, next) {
     let token = null;
     
@@ -496,6 +556,7 @@ function optionalAuth(req, res, next) {
     next();
 }
 
+// Set cookie helper function
 function setAuthCookie(res, token) {
     const cookieOptions = {
         httpOnly: true,
@@ -509,6 +570,7 @@ function setAuthCookie(res, token) {
     res.cookie('TavianSecurity', token, cookieOptions);
 }
 
+// Clear cookie helper
 function clearAuthCookie(res) {
     res.clearCookie('TavianSecurity', {
         path: '/',
@@ -576,6 +638,7 @@ app.get('/api/auto-login', (req, res) => {
         return res.status(401).json({ error: 'User not found' });
     }
     
+    // Refresh the token
     const newToken = generateSecureToken(user.id, user.username);
     setAuthCookie(res, newToken);
     
@@ -663,114 +726,6 @@ app.post('/api/logout', (req, res) => {
     res.json({ success: true });
 });
 
-// ============= PROFILE UPDATE ENDPOINTS =============
-
-// UPDATE user profile by ID - PATCH
-app.patch('/api/users/:id/profile', authenticateToken, async (req, res) => {
-    const userId = parseInt(req.params.id);
-    
-    if (req.user.id !== userId) {
-        return res.status(403).json({ error: 'Forbidden - Cannot update another user\'s profile' });
-    }
-    
-    const users = readUsers();
-    const index = users.findIndex(u => u.id === userId);
-    if (index === -1) {
-        return res.status(404).json({ error: 'User not found' });
-    }
-    
-    const allowedUpdates = ['displayName', 'about'];
-    let updated = false;
-    const updates = {};
-    
-    for (let key of allowedUpdates) {
-        if (req.body[key] !== undefined) {
-            if (typeof req.body[key] === 'string') {
-                let value = req.body[key].trim();
-                value = value.replace(/<[^>]*>/g, '');
-                value = value.substring(0, 500);
-                
-                users[index][key] = value;
-                updates[key] = value;
-                updated = true;
-                console.log(`✅ Updated ${key} for user ${users[index].username} to: "${value}"`);
-            }
-        }
-    }
-    
-    if (!updated) {
-        return res.status(400).json({ error: 'No valid fields to update. Allowed: displayName, about' });
-    }
-    
-    writeUsers(users);
-    
-    const { password, ...safe } = users[index];
-    res.json({ 
-        success: true, 
-        message: 'Profile updated successfully',
-        updated: updates,
-        user: safe 
-    });
-});
-
-// UPDATE user settings by ID
-app.patch('/api/users/:id/settings', authenticateToken, async (req, res) => {
-    const userId = parseInt(req.params.id);
-    
-    if (req.user.id !== userId) {
-        return res.status(403).json({ error: 'Forbidden' });
-    }
-    
-    const users = readUsers();
-    const index = users.findIndex(u => u.id === userId);
-    if (index === -1) {
-        return res.status(404).json({ error: 'User not found' });
-    }
-    
-    const allowedUpdates = ['tavix', 'transactions', 'notifications', 'savedDevices', 'visits'];
-    let updated = false;
-    
-    for (let key of allowedUpdates) {
-        if (req.body[key] !== undefined) {
-            users[index][key] = req.body[key];
-            updated = true;
-        }
-    }
-    
-    if (!updated) {
-        return res.status(400).json({ error: 'No valid fields to update' });
-    }
-    
-    writeUsers(users);
-    
-    const { password, ...safe } = users[index];
-    res.json({ success: true, user: safe });
-});
-
-// DELETE user account by ID
-app.delete('/api/users/:id/delete', authenticateToken, async (req, res) => {
-    const userId = parseInt(req.params.id);
-    
-    if (req.user.id !== userId) {
-        return res.status(403).json({ error: 'Forbidden - Cannot delete another user\'s account' });
-    }
-    
-    let users = readUsers();
-    const userToDelete = users.find(u => u.id === userId);
-    
-    if (!userToDelete) {
-        return res.status(404).json({ error: 'User not found' });
-    }
-    
-    users = users.filter(u => u.id !== userId);
-    writeUsers(users);
-    
-    clearAuthCookie(res);
-    res.json({ success: true, message: 'Account deleted successfully' });
-});
-
-// ============= CHAT ENDPOINTS =============
-
 // POST chat message (with moderation)
 app.post('/api/chat', authenticateToken, (req, res) => {
     const { message } = req.body;
@@ -784,9 +739,11 @@ app.post('/api/chat', authenticateToken, (req, res) => {
         return res.status(400).json({ error: 'Message too long (max 500 characters)' });
     }
     
+    // Run moderation
     const moderation = advancedModerationCheck(message, username);
     const filtered = filterMessageForDisplay(message, username);
     
+    // Log for admin review
     logChatMessage(username, message, filtered.filtered, moderation);
     
     if (!moderation.allowed) {
@@ -797,6 +754,7 @@ app.post('/api/chat', authenticateToken, (req, res) => {
         });
     }
     
+    // Return filtered message for display
     res.json({
         success: true,
         original: message,
@@ -807,9 +765,10 @@ app.post('/api/chat', authenticateToken, (req, res) => {
     });
 });
 
-// Admin endpoint to view moderation logs
+// Admin endpoint to view moderation logs (protected)
 app.get('/api/admin/moderation-logs', authenticateToken, (req, res) => {
-    const adminUsers = ['realgysj', 'plstealme2'];
+    // Only allow admin users (you can specify which users are admins)
+    const adminUsers = ['realgysj', 'admin']; // Add admin usernames here
     
     if (!adminUsers.includes(req.user.username.toLowerCase())) {
         return res.status(403).json({ error: 'Admin access required' });
@@ -820,11 +779,62 @@ app.get('/api/admin/moderation-logs', authenticateToken, (req, res) => {
     
     res.json({
         total: logs.length,
-        logs: logs.slice(0, 100)
+        logs: logs.slice(0, 100) // Return last 100 logs
     });
 });
 
-// ============= TRANSACTION & NOTIFICATION ENDPOINTS =============
+// PUT update user by ID
+app.put('/api/users/:id', authenticateToken, async (req, res) => {
+    const userId = parseInt(req.params.id);
+    
+    if (req.user.id !== userId) {
+        return res.status(403).json({ error: 'Forbidden' });
+    }
+    
+    const users = readUsers();
+    const index = users.findIndex(u => u.id === userId);
+    if (index === -1) {
+        return res.status(404).json({ error: 'User not found' });
+    }
+    
+    const allowedUpdates = ['displayName', 'about', 'tavix', 'transactions', 'notifications', 'savedDevices'];
+    for (let key of allowedUpdates) {
+        if (req.body[key] !== undefined) {
+            users[index][key] = req.body[key];
+        }
+    }
+    
+    writeUsers(users);
+    
+    const { password, ...safe } = users[index];
+    res.json(safe);
+});
+
+// PUT update user by username (legacy)
+app.put('/api/user/:username', authenticateToken, async (req, res) => {
+    const users = readUsers();
+    const index = users.findIndex(u => u.username === req.params.username);
+    
+    if (index === -1) {
+        return res.status(404).json({ error: 'User not found' });
+    }
+    
+    if (req.user.username !== req.params.username) {
+        return res.status(403).json({ error: 'Forbidden' });
+    }
+    
+    const allowedUpdates = ['displayName', 'about', 'tavix', 'transactions', 'notifications', 'savedDevices'];
+    for (let key of allowedUpdates) {
+        if (req.body[key] !== undefined) {
+            users[index][key] = req.body[key];
+        }
+    }
+    
+    writeUsers(users);
+    
+    const { password, ...safe } = users[index];
+    res.json(safe);
+});
 
 // POST transaction
 app.post('/api/transaction', authenticateToken, async (req, res) => {
@@ -885,393 +895,41 @@ app.post('/api/notification', authenticateToken, async (req, res) => {
     res.json({ success: true });
 });
 
-// ============= GAME ENDPOINTS (NEW) =============
-
-// Save/Publish a game
-app.post('/api/games/publish', authenticateToken, async (req, res) => {
-    try {
-        const { 
-            gameName, 
-            description, 
-            genre, 
-            subgenre, 
-            isPublic, 
-            thumbnail, 
-            gameData 
-        } = req.body;
-        
-        if (!gameName || gameName.trim().length === 0) {
-            return res.status(400).json({ error: 'Game name is required' });
-        }
-        
-        if (!gameData) {
-            return res.status(400).json({ error: 'Game data is required' });
-        }
-        
-        const gameId = generateGameId();
-        const games = readGames();
-        
-        const newGame = {
-            id: gameId,
-            name: gameName.trim(),
-            description: description || '',
-            genre: genre || 'Other',
-            subgenre: subgenre || '',
-            isPublic: isPublic !== false,
-            thumbnail: thumbnail || null,
-            gameData: gameData,
-            creatorId: req.user.id,
-            creatorName: req.user.username,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-            plays: 0,
-            likes: 0,
-            favorites: 0
-        };
-        
-        games.games.push(newGame);
-        writeGames(games);
-        
-        // Add notification to user
-        const users = readUsers();
-        const userIndex = users.findIndex(u => u.id === req.user.id);
-        if (userIndex !== -1) {
-            if (!users[userIndex].notifications) users[userIndex].notifications = [];
-            users[userIndex].notifications.unshift({
-                id: Date.now(),
-                title: "🎮 Game Published!",
-                message: `Your game "${gameName}" has been published successfully! Game ID: ${gameId}`,
-                read: false,
-                time: new Date().toISOString()
-            });
-            writeUsers(users);
-        }
-        
-        res.json({ 
-            success: true, 
-            gameId: gameId,
-            game: {
-                id: gameId,
-                name: gameName,
-                isPublic: isPublic !== false
-            }
-        });
-        
-    } catch (error) {
-        console.error('Publish error:', error);
-        res.status(500).json({ error: 'Failed to publish game' });
+// DELETE user account by ID
+app.delete('/api/users/:id', authenticateToken, async (req, res) => {
+    const userId = parseInt(req.params.id);
+    
+    if (req.user.id !== userId) {
+        return res.status(403).json({ error: 'Forbidden' });
     }
+    
+    let users = readUsers();
+    users = users.filter(u => u.id !== userId);
+    writeUsers(users);
+    
+    clearAuthCookie(res);
+    res.json({ success: true });
 });
 
-// Update existing game
-app.put('/api/games/:gameId', authenticateToken, async (req, res) => {
-    try {
-        const gameId = req.params.gameId;
-        const { gameName, description, genre, subgenre, isPublic, thumbnail, gameData } = req.body;
-        
-        const games = readGames();
-        const gameIndex = games.games.findIndex(g => g.id === gameId);
-        
-        if (gameIndex === -1) {
-            return res.status(404).json({ error: 'Game not found' });
-        }
-        
-        const game = games.games[gameIndex];
-        
-        // Check ownership
-        if (game.creatorId !== req.user.id) {
-            return res.status(403).json({ error: 'Not your game' });
-        }
-        
-        if (gameName) game.name = gameName.trim();
-        if (description !== undefined) game.description = description;
-        if (genre) game.genre = genre;
-        if (subgenre !== undefined) game.subgenre = subgenre;
-        if (isPublic !== undefined) game.isPublic = isPublic;
-        if (thumbnail) game.thumbnail = thumbnail;
-        if (gameData) game.gameData = gameData;
-        game.updatedAt = new Date().toISOString();
-        
-        writeGames(games);
-        
-        res.json({ success: true, game });
-        
-    } catch (error) {
-        console.error('Update error:', error);
-        res.status(500).json({ error: 'Failed to update game' });
+// DELETE user account by username (legacy)
+app.delete('/api/user/:username', authenticateToken, async (req, res) => {
+    let users = readUsers();
+    const userToDelete = users.find(u => u.username === req.params.username);
+    
+    if (!userToDelete) {
+        return res.status(404).json({ error: 'User not found' });
     }
-});
-
-// Get all public games (for browsing)
-app.get('/api/games', optionalAuth, async (req, res) => {
-    try {
-        const games = readGames();
-        const publicGames = games.games.filter(g => g.isPublic === true);
-        
-        // Remove heavy gameData from list view
-        const safeGames = publicGames.map(g => ({
-            id: g.id,
-            name: g.name,
-            description: g.description,
-            genre: g.genre,
-            subgenre: g.subgenre,
-            thumbnail: g.thumbnail,
-            creatorName: g.creatorName,
-            creatorId: g.creatorId,
-            createdAt: g.createdAt,
-            updatedAt: g.updatedAt,
-            plays: g.plays,
-            likes: g.likes,
-            favorites: g.favorites
-        }));
-        
-        // Sort by newest first
-        safeGames.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-        
-        res.json(safeGames);
-        
-    } catch (error) {
-        console.error('Fetch games error:', error);
-        res.status(500).json({ error: 'Failed to fetch games' });
+    
+    if (req.user.username !== req.params.username) {
+        return res.status(403).json({ error: 'Forbidden' });
     }
+    
+    users = users.filter(u => u.username !== req.params.username);
+    writeUsers(users);
+    
+    clearAuthCookie(res);
+    res.json({ success: true });
 });
-
-// Get featured/popular games
-app.get('/api/games/featured', optionalAuth, async (req, res) => {
-    try {
-        const games = readGames();
-        const publicGames = games.games.filter(g => g.isPublic === true);
-        
-        const featured = publicGames
-            .sort((a, b) => (b.plays || 0) - (a.plays || 0))
-            .slice(0, 10)
-            .map(g => ({
-                id: g.id,
-                name: g.name,
-                description: g.description,
-                genre: g.genre,
-                thumbnail: g.thumbnail,
-                creatorName: g.creatorName,
-                plays: g.plays,
-                likes: g.likes
-            }));
-        
-        res.json(featured);
-        
-    } catch (error) {
-        res.status(500).json({ error: 'Failed to fetch featured games' });
-    }
-});
-
-// Get single game by ID (full data for playing)
-app.get('/api/games/:gameId', optionalAuth, async (req, res) => {
-    try {
-        const gameId = req.params.gameId;
-        const games = readGames();
-        const game = games.games.find(g => g.id === gameId);
-        
-        if (!game) {
-            return res.status(404).json({ error: 'Game not found' });
-        }
-        
-        // Check privacy
-        if (!game.isPublic && (!req.user || game.creatorId !== req.user.id)) {
-            return res.status(403).json({ error: 'This game is private' });
-        }
-        
-        // Increment play count
-        game.plays = (game.plays || 0) + 1;
-        writeGames(games);
-        
-        // Return full game data (including gameData for playing)
-        res.json({
-            id: game.id,
-            name: game.name,
-            description: game.description,
-            genre: game.genre,
-            subgenre: game.subgenre,
-            isPublic: game.isPublic,
-            thumbnail: game.thumbnail,
-            gameData: game.gameData,
-            creatorName: game.creatorName,
-            creatorId: game.creatorId,
-            createdAt: game.createdAt,
-            updatedAt: game.updatedAt,
-            plays: game.plays,
-            likes: game.likes
-        });
-        
-    } catch (error) {
-        console.error('Fetch game error:', error);
-        res.status(500).json({ error: 'Failed to fetch game' });
-    }
-});
-
-// Get user's own games
-app.get('/api/user/games', authenticateToken, async (req, res) => {
-    try {
-        const games = readGames();
-        const userGames = games.games.filter(g => g.creatorId === req.user.id);
-        
-        const safeGames = userGames.map(g => ({
-            id: g.id,
-            name: g.name,
-            description: g.description,
-            genre: g.genre,
-            subgenre: g.subgenre,
-            isPublic: g.isPublic,
-            thumbnail: g.thumbnail,
-            createdAt: g.createdAt,
-            updatedAt: g.updatedAt,
-            plays: g.plays,
-            likes: g.likes
-        }));
-        
-        // Sort by most recent first
-        safeGames.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
-        
-        res.json(safeGames);
-        
-    } catch (error) {
-        console.error('Fetch user games error:', error);
-        res.status(500).json({ error: 'Failed to fetch user games' });
-    }
-});
-
-// Get games by a specific creator
-app.get('/api/games/creator/:creatorId', optionalAuth, async (req, res) => {
-    try {
-        const creatorId = parseInt(req.params.creatorId);
-        const games = readGames();
-        const creatorGames = games.games.filter(g => g.creatorId === creatorId && g.isPublic === true);
-        
-        const safeGames = creatorGames.map(g => ({
-            id: g.id,
-            name: g.name,
-            description: g.description,
-            genre: g.genre,
-            thumbnail: g.thumbnail,
-            plays: g.plays,
-            likes: g.likes,
-            createdAt: g.createdAt
-        }));
-        
-        res.json(safeGames);
-        
-    } catch (error) {
-        res.status(500).json({ error: 'Failed to fetch creator games' });
-    }
-});
-
-// Delete game
-app.delete('/api/games/:gameId', authenticateToken, async (req, res) => {
-    try {
-        const gameId = req.params.gameId;
-        const games = readGames();
-        const gameIndex = games.games.findIndex(g => g.id === gameId);
-        
-        if (gameIndex === -1) {
-            return res.status(404).json({ error: 'Game not found' });
-        }
-        
-        if (games.games[gameIndex].creatorId !== req.user.id) {
-            return res.status(403).json({ error: 'Not your game' });
-        }
-        
-        const deletedGame = games.games[gameIndex];
-        games.games.splice(gameIndex, 1);
-        writeGames(games);
-        
-        res.json({ 
-            success: true, 
-            message: `Game "${deletedGame.name}" deleted successfully` 
-        });
-        
-    } catch (error) {
-        console.error('Delete game error:', error);
-        res.status(500).json({ error: 'Failed to delete game' });
-    }
-});
-
-// Like/unlike a game
-app.post('/api/games/:gameId/like', authenticateToken, async (req, res) => {
-    try {
-        const gameId = req.params.gameId;
-        const games = readGames();
-        const gameIndex = games.games.findIndex(g => g.id === gameId);
-        
-        if (gameIndex === -1) {
-            return res.status(404).json({ error: 'Game not found' });
-        }
-        
-        // Simple like increment (in production, track which users liked)
-        games.games[gameIndex].likes = (games.games[gameIndex].likes || 0) + 1;
-        writeGames(games);
-        
-        res.json({ 
-            success: true, 
-            likes: games.games[gameIndex].likes 
-        });
-        
-    } catch (error) {
-        res.status(500).json({ error: 'Failed to like game' });
-    }
-});
-
-// Search games
-app.get('/api/games/search/:query', optionalAuth, async (req, res) => {
-    try {
-        const query = req.params.query.toLowerCase();
-        const games = readGames();
-        const publicGames = games.games.filter(g => g.isPublic === true);
-        
-        const results = publicGames.filter(g => 
-            g.name.toLowerCase().includes(query) ||
-            g.description.toLowerCase().includes(query) ||
-            g.genre.toLowerCase().includes(query) ||
-            g.creatorName.toLowerCase().includes(query)
-        ).map(g => ({
-            id: g.id,
-            name: g.name,
-            description: g.description,
-            genre: g.genre,
-            thumbnail: g.thumbnail,
-            creatorName: g.creatorName,
-            plays: g.plays
-        }));
-        
-        res.json(results);
-        
-    } catch (error) {
-        res.status(500).json({ error: 'Search failed' });
-    }
-});
-
-// Get games by genre
-app.get('/api/games/genre/:genre', optionalAuth, async (req, res) => {
-    try {
-        const genre = req.params.genre;
-        const games = readGames();
-        const genreGames = games.games.filter(g => g.isPublic === true && g.genre === genre);
-        
-        const results = genreGames.map(g => ({
-            id: g.id,
-            name: g.name,
-            description: g.description,
-            genre: g.genre,
-            thumbnail: g.thumbnail,
-            creatorName: g.creatorName,
-            plays: g.plays
-        }));
-        
-        res.json(results);
-        
-    } catch (error) {
-        res.status(500).json({ error: 'Failed to fetch by genre' });
-    }
-});
-
-// ============= MIGRATION & UTILITY ENDPOINTS =============
 
 // MIGRATION: Add IDs to existing users
 app.post('/api/migrate-ids', (req, res) => {
@@ -1300,58 +958,10 @@ app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Debug endpoint - Check user data (admin only)
-app.get('/api/debug/user/:id', authenticateToken, (req, res) => {
-    const adminUsers = ['realgysj', 'plstealme2'];
-    
-    if (!adminUsers.includes(req.user.username.toLowerCase())) {
-        return res.status(403).json({ error: 'Admin access required' });
-    }
-    
-    const userId = parseInt(req.params.id);
-    const users = readUsers();
-    const user = users.find(u => u.id === userId);
-    
-    if (!user) {
-        return res.status(404).json({ error: 'User not found' });
-    }
-    
-    res.json({
-        id: user.id,
-        username: user.username,
-        displayName: user.displayName,
-        about: user.about,
-        tavix: user.tavix,
-        email: user.email,
-        createdAt: user.createdAt
-    });
-});
-
-// Debug - List all games (admin only)
-app.get('/api/admin/games', authenticateToken, (req, res) => {
-    const adminUsers = ['realgysj', 'plstealme2'];
-    
-    if (!adminUsers.includes(req.user.username.toLowerCase())) {
-        return res.status(403).json({ error: 'Admin access required' });
-    }
-    
-    const games = readGames();
-    const gameList = games.games.map(g => ({
-        id: g.id,
-        name: g.name,
-        creatorName: g.creatorName,
-        isPublic: g.isPublic,
-        plays: g.plays,
-        createdAt: g.createdAt
-    }));
-    
-    res.json({ total: gameList.length, games: gameList });
-});
-
 // Start server
 app.listen(PORT, () => {
     console.log(`\n========================================`);
-    console.log(`🟣 Tavian Backend Server (UPDATED with Games API)`);
+    console.log(`🟣 Tavian Backend Server`);
     console.log(`========================================`);
     console.log(`📡 Running on: http://localhost:${PORT}`);
     console.log(`🔗 Frontend URL: ${FRONTEND_URL}`);
@@ -1360,17 +970,5 @@ app.listen(PORT, () => {
     console.log(`✅ Persistent sessions: 30 days`);
     console.log(`✅ Advanced moderation system: ACTIVE`);
     console.log(`✅ Chat filtering: ENABLED`);
-    console.log(`✅ Profile updates: WORKING (PATCH /api/users/:id/profile)`);
-    console.log(`✅ Allowed updates: displayName, about`);
-    console.log(`✅ GAME API:`);
-    console.log(`   - POST   /api/games/publish      - Publish new game`);
-    console.log(`   - PUT    /api/games/:gameId     - Update game`);
-    console.log(`   - GET    /api/games             - List public games`);
-    console.log(`   - GET    /api/games/featured    - Featured games`);
-    console.log(`   - GET    /api/games/:gameId     - Get game details`);
-    console.log(`   - GET    /api/user/games        - User's games`);
-    console.log(`   - DELETE /api/games/:gameId     - Delete game`);
-    console.log(`   - GET    /api/games/search/:query - Search games`);
-    console.log(`   - GET    /api/games/genre/:genre  - Filter by genre`);
     console.log(`========================================\n`);
 });
