@@ -385,24 +385,50 @@ app.post('/api/logout', (req, res) => {
     res.json({ success: true });
 });
 
-// ============= EDIT PROFILE =============
-app.put('/api/profile', authenticateToken, async (req, res) => {
+// ============= EDIT PROFILE - FIXED =============
+app.put('/api/profile', authenticateToken, (req, res) => {
     const currentUsername = req.user.username;
     const { displayName, about, discord, status, avatar } = req.body;
     
     console.log('📝 Profile update request for:', currentUsername);
-    console.log('Updates:', { displayName, about, discord, status, avatar });
+    console.log('Received data:', { displayName, about, discord, status, avatar });
     
-    const updatedUser = await updateUserProfile(currentUsername, {
-        displayName, about, discord, status, avatar
-    });
+    const users = readUsers();
+    const index = users.findIndex(u => u.username === currentUsername);
     
-    if (!updatedUser) {
+    if (index === -1) {
         return res.status(404).json({ error: "User not found" });
     }
     
+    // Update fields if provided
+    if (displayName !== undefined) users[index].displayName = displayName;
+    if (about !== undefined) users[index].about = about;
+    if (discord !== undefined) users[index].discord = discord;
+    if (status !== undefined) users[index].status = status;
+    if (avatar !== undefined) users[index].avatar = avatar;
+    
+    // Ensure owner has correct badge
+    if (users[index].username === 'realgysj') {
+        users[index].isOwner = true;
+        users[index].role = "Owner";
+        users[index].roleBadge = "👑";
+        users[index].roleColor = "#ffcc00";
+    }
+    
+    // Ensure moderator has correct badge
+    if (users[index].username === 'plstealme2') {
+        users[index].isModerator = true;
+        users[index].role = "Moderator";
+        users[index].roleBadge = "🔨";
+        users[index].roleColor = "#00aaff";
+    }
+    
+    writeUsers(users);
+    
     console.log('✅ Profile updated successfully for:', currentUsername);
-    res.json({ success: true, user: updatedUser });
+    
+    const { password, ...safeUser } = users[index];
+    res.json({ success: true, user: safeUser });
 });
 
 // ============= FRIEND SYSTEM =============
