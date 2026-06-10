@@ -66,8 +66,6 @@ const bannedWords = new Map([
     ['asshole', { severity: 6, contexts: ['insult'] }],
     ['shithead', { severity: 7, contexts: ['insult'] }],
     ['dumbass', { severity: 5, contexts: ['insult'] }],
-    
-    // Hate speech
     ['hitler', { severity: 10, contexts: ['hate', 'historical'] }],
     ['nazi', { severity: 10, contexts: ['hate', 'historical'] }],
     ['holocaust', { severity: 9, contexts: ['sensitive'] }],
@@ -75,7 +73,6 @@ const bannedWords = new Map([
     ['black power', { severity: 4, contexts: ['political'] }],
 ]);
 
-// Comprehensive allowlist
 const allowlist = new Set([
     'assassin', 'assassinate', 'assassination', 'assault', 'assemble', 'assembly', 
     'assist', 'assistant', 'associate', 'association', 'assume', 'assumption', 
@@ -151,8 +148,6 @@ function checkContext(message, badWord, wordContext) {
     for (let i = 0; i < words.length; i++) {
         const word = words[i];
         if (word.length > badWord.length + 2 && word.includes(badWord)) {
-            const beforeChar = word[word.indexOf(badWord) - 1];
-            const afterChar = word[word.indexOf(badWord) + badWord.length];
             if (allowlist.has(word) || isAllowlisted(word)) {
                 return { allowed: true, reason: 'part_of_allowlist_word' };
             }
@@ -524,20 +519,6 @@ app.get('/api/users/:id', optionalAuth, (req, res) => {
     res.json(safe);
 });
 
-// GET user profile by ID (separate from update/delete)
-app.get('/api/users/:id/profile', optionalAuth, (req, res) => {
-    const users = readUsers();
-    const userId = parseInt(req.params.id);
-    const user = users.find(u => u.id === userId);
-    
-    if (!user) {
-        return res.status(404).json({ error: 'User not found' });
-    }
-    
-    const { password, ...safe } = user;
-    res.json(safe);
-});
-
 // GET current user
 app.get('/api/me', authenticateToken, (req, res) => {
     const users = readUsers();
@@ -658,7 +639,9 @@ app.post('/api/logout', (req, res) => {
     res.json({ success: true });
 });
 
-// UPDATE user profile by ID (working endpoint)
+// ============= PROFILE UPDATE ENDPOINTS (FIXED) =============
+
+// UPDATE user profile by ID - PATCH (Fully working)
 app.patch('/api/users/:id/profile', authenticateToken, async (req, res) => {
     const userId = parseInt(req.params.id);
     
@@ -676,19 +659,26 @@ app.patch('/api/users/:id/profile', authenticateToken, async (req, res) => {
     // Allowed fields for profile update
     const allowedUpdates = ['displayName', 'about'];
     let updated = false;
+    const updates = {};
     
     for (let key of allowedUpdates) {
         if (req.body[key] !== undefined) {
             if (typeof req.body[key] === 'string') {
-                // Sanitize input
-                users[index][key] = req.body[key].trim().substring(0, 100);
+                // Sanitize input - remove any HTML tags and limit length
+                let value = req.body[key].trim();
+                value = value.replace(/<[^>]*>/g, ''); // Remove HTML tags
+                value = value.substring(0, 500); // Max 500 characters
+                
+                users[index][key] = value;
+                updates[key] = value;
                 updated = true;
+                console.log(`✅ Updated ${key} for user ${users[index].username} to: "${value}"`);
             }
         }
     }
     
     if (!updated) {
-        return res.status(400).json({ error: 'No valid fields to update' });
+        return res.status(400).json({ error: 'No valid fields to update. Allowed: displayName, about' });
     }
     
     writeUsers(users);
@@ -697,6 +687,7 @@ app.patch('/api/users/:id/profile', authenticateToken, async (req, res) => {
     res.json({ 
         success: true, 
         message: 'Profile updated successfully',
+        updated: updates,
         user: safe 
     });
 });
@@ -757,6 +748,8 @@ app.delete('/api/users/:id/delete', authenticateToken, async (req, res) => {
     res.json({ success: true, message: 'Account deleted successfully' });
 });
 
+// ============= CHAT ENDPOINTS =============
+
 // POST chat message (with moderation)
 app.post('/api/chat', authenticateToken, (req, res) => {
     const { message } = req.body;
@@ -809,6 +802,8 @@ app.get('/api/admin/moderation-logs', authenticateToken, (req, res) => {
         logs: logs.slice(0, 100)
     });
 });
+
+// ============= TRANSACTION & NOTIFICATION ENDPOINTS =============
 
 // POST transaction
 app.post('/api/transaction', authenticateToken, async (req, res) => {
@@ -869,6 +864,8 @@ app.post('/api/notification', authenticateToken, async (req, res) => {
     res.json({ success: true });
 });
 
+// ============= MIGRATION & UTILITY ENDPOINTS =============
+
 // MIGRATION: Add IDs to existing users
 app.post('/api/migrate-ids', (req, res) => {
     const data = readData();
@@ -896,10 +893,37 @@ app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Debug endpoint - Check user data (admin only)
+app.get('/api/debug/user/:id', authenticateToken, (req, res) => {
+    const adminUsers = ['realgysj', 'plstealme2'];
+    
+    if (!adminUsers.includes(req.user.username.toLowerCase())) {
+        return res.status(403).json({ error: 'Admin access required' });
+    }
+    
+    const userId = parseInt(req.params.id);
+    const users = readUsers();
+    const user = users.find(u => u.id === userId);
+    
+    if (!user) {
+        return res.status(404).json({ error: 'User not found' });
+    }
+    
+    res.json({
+        id: user.id,
+        username: user.username,
+        displayName: user.displayName,
+        about: user.about,
+        tavix: user.tavix,
+        email: user.email,
+        createdAt: user.createdAt
+    });
+});
+
 // Start server
 app.listen(PORT, () => {
     console.log(`\n========================================`);
-    console.log(`🟣 Tavian Backend Server (UPDATED)`);
+    console.log(`🟣 Tavian Backend Server (FIXED)`);
     console.log(`========================================`);
     console.log(`📡 Running on: http://localhost:${PORT}`);
     console.log(`🔗 Frontend URL: ${FRONTEND_URL}`);
@@ -908,7 +932,7 @@ app.listen(PORT, () => {
     console.log(`✅ Persistent sessions: 30 days`);
     console.log(`✅ Advanced moderation system: ACTIVE`);
     console.log(`✅ Chat filtering: ENABLED`);
-    console.log(`✅ RESTful endpoints: /api/users/:id/profile`);
-    console.log(`✅ Profile updates: WORKING`);
+    console.log(`✅ Profile updates: WORKING (PATCH /api/users/:id/profile)`);
+    console.log(`✅ Allowed updates: displayName, about`);
     console.log(`========================================\n`);
 });
