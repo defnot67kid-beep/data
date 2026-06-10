@@ -9,11 +9,11 @@ const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Secret keys - Use environment variables in production!
+// Secret keys
 const JWT_SECRET = process.env.JWT_SECRET || "TAVIAN_SUPER_SECRET_KEY_CHANGE_THIS_12345";
 const HCAPTCHA_SECRET = process.env.HCAPTCHA_SECRET || "ES_3e9f86c0fff2435a9c741ef2d05a438f";
 
-// Frontend URL (Netlify)
+// Frontend URL
 const FRONTEND_URL = process.env.FRONTEND_URL || "https://tavian.netlify.app";
 
 // Data file path
@@ -24,7 +24,7 @@ if (!fs.existsSync(DATA_FILE)) {
     fs.writeFileSync(DATA_FILE, JSON.stringify({ users: [], nextId: 1, chatLogs: [], roles: [] }, null, 2));
 }
 
-// ============= DEFAULT ROLES =============
+// Default roles
 const DEFAULT_ROLES = [
     { id: 1, name: "Moderator", badge: "🔨", color: "#00aaff", createdAt: new Date().toISOString() },
     { id: 2, name: "Booster", badge: "💎", color: "#ff66cc", createdAt: new Date().toISOString() },
@@ -34,7 +34,6 @@ const DEFAULT_ROLES = [
     { id: 6, name: "VIP", badge: "👑", color: "#ffd700", createdAt: new Date().toISOString() }
 ];
 
-// Initialize roles if empty
 function initRoles() {
     const data = readData();
     if (!data.roles || data.roles.length === 0) {
@@ -46,107 +45,7 @@ function initRoles() {
 }
 initRoles();
 
-// ============= ADVANCED MODERATION SYSTEM =============
-
-// Comprehensive banned words with context awareness
-const bannedWords = new Map([
-    ['fuck', { severity: 10, contexts: ['sexual', 'insult', 'violent'] }],
-    ['shit', { severity: 7, contexts: ['excretory', 'insult'] }],
-    ['damn', { severity: 3, contexts: ['mild'] }],
-    ['ass', { severity: 5, contexts: ['insult', 'bodypart'] }],
-    ['bitch', { severity: 8, contexts: ['insult', 'misogynistic'] }],
-    ['cunt', { severity: 10, contexts: ['extreme', 'insult'] }],
-    ['dick', { severity: 7, contexts: ['sexual', 'insult'] }],
-    ['pussy', { severity: 8, contexts: ['sexual', 'insult'] }],
-    ['cock', { severity: 8, contexts: ['sexual'] }],
-    ['whore', { severity: 9, contexts: ['sexual', 'insult'] }],
-    ['bastard', { severity: 6, contexts: ['insult'] }],
-    ['slut', { severity: 9, contexts: ['sexual', 'insult'] }],
-    ['nigger', { severity: 10, contexts: ['racist', 'extreme'] }],
-    ['nigga', { severity: 8, contexts: ['racist', 'cultural'] }],
-    ['faggot', { severity: 10, contexts: ['homophobic', 'extreme'] }],
-    ['retard', { severity: 8, contexts: ['ableist', 'insult'] }],
-    ['kys', { severity: 10, contexts: ['violent', 'selfharm'] }],
-    ['kill yourself', { severity: 10, contexts: ['violent', 'selfharm'] }],
-    ['cum', { severity: 8, contexts: ['sexual'] }],
-    ['dildo', { severity: 7, contexts: ['sexual'] }],
-    ['porn', { severity: 6, contexts: ['sexual'] }],
-    ['nude', { severity: 5, contexts: ['sexual'] }],
-    ['anal', { severity: 7, contexts: ['sexual'] }],
-    ['rape', { severity: 10, contexts: ['violent', 'sexual'] }],
-    ['rapist', { severity: 10, contexts: ['violent', 'sexual'] }],
-    ['motherfucker', { severity: 9, contexts: ['insult', 'extreme'] }],
-    ['fucker', { severity: 8, contexts: ['insult'] }],
-]);
-
-// Comprehensive allowlist
-const allowlist = new Set([
-    'assassin', 'assassinate', 'assault', 'assemble', 'assembly', 
-    'assist', 'assistant', 'associate', 'association', 'assume',
-    'cocktail', 'cockatoo', 'cockpit', 'ship', 'shipping',
-    'night', 'nightmare', 'nigeria', 'nigerian', 'grape', 'scrape',
-    'skill', 'killingly', 'sussex', 'essex', 'wessex'
-]);
-
-const safePhrases = new Set([
-    'i love this game', 'good game', 'nice shot', 'well played',
-    'how are you', 'im fine', 'thank you', 'thanks', 'please'
-]);
-
-function normalizeLeet(text) {
-    const leetMap = {
-        '0': 'o', '1': 'i', '2': 'z', '3': 'e', '4': 'a', '5': 's',
-        '6': 'g', '7': 't', '8': 'b', '9': 'g', '@': 'a', '!': 'i'
-    };
-    let normalized = text.toLowerCase();
-    for (const [leet, normal] of Object.entries(leetMap)) {
-        normalized = normalized.split(leet).join(normal);
-    }
-    return normalized;
-}
-
-function isAllowlisted(word) {
-    const normalized = word.toLowerCase();
-    if (allowlist.has(normalized)) return true;
-    for (const allowed of allowlist) {
-        if (normalized.includes(allowed) && allowed.length > 3) return true;
-    }
-    return false;
-}
-
-function advancedModerationCheck(message, username = '') {
-    const result = { allowed: true, blocked: false, reason: '', severity: 0, flaggedWords: [] };
-    if (!message || message.trim().length === 0) return result;
-    
-    const lowerMsg = message.toLowerCase();
-    for (const phrase of safePhrases) {
-        if (lowerMsg.includes(phrase)) return result;
-    }
-    
-    let normalized = normalizeLeet(message);
-    const words = normalized.split(/\s+/);
-    
-    for (const word of words) {
-        if (word.length < 3) continue;
-        if (isAllowlisted(word)) continue;
-        
-        for (const [bannedWord, config] of bannedWords) {
-            if (word.includes(bannedWord)) {
-                result.flaggedWords.push({ word: bannedWord, severity: config.severity });
-                result.severity = Math.max(result.severity, config.severity);
-            }
-        }
-    }
-    
-    if (result.severity >= 8) {
-        result.allowed = false;
-        result.blocked = true;
-        result.reason = 'inappropriate_content_blocked';
-    }
-    return result;
-}
-
-// ============= CORS CONFIGURATION =============
+// ============= CORS =============
 app.use(cors({
     origin: [FRONTEND_URL, 'http://localhost:3000', 'http://localhost:5500', 'http://127.0.0.1:5500'],
     credentials: true,
@@ -313,6 +212,7 @@ async function updateUserProfile(username, updates) {
     const index = users.findIndex(u => u.username === username);
     if (index === -1) return null;
     
+    // Allowed fields for profile update
     const allowedUpdates = ['displayName', 'about', 'avatar', 'discord', 'status'];
     for (let key of allowedUpdates) {
         if (updates[key] !== undefined) {
@@ -485,6 +385,26 @@ app.post('/api/logout', (req, res) => {
     res.json({ success: true });
 });
 
+// ============= EDIT PROFILE =============
+app.put('/api/profile', authenticateToken, async (req, res) => {
+    const currentUsername = req.user.username;
+    const { displayName, about, discord, status, avatar } = req.body;
+    
+    console.log('📝 Profile update request for:', currentUsername);
+    console.log('Updates:', { displayName, about, discord, status, avatar });
+    
+    const updatedUser = await updateUserProfile(currentUsername, {
+        displayName, about, discord, status, avatar
+    });
+    
+    if (!updatedUser) {
+        return res.status(404).json({ error: "User not found" });
+    }
+    
+    console.log('✅ Profile updated successfully for:', currentUsername);
+    res.json({ success: true, user: updatedUser });
+});
+
 // ============= FRIEND SYSTEM =============
 
 // Send friend request
@@ -501,7 +421,7 @@ app.post('/api/friend-request/:username', authenticateToken, async (req, res) =>
     const targetUser = users.find(u => u.username === targetUsername);
     
     if (!targetUser) return res.status(404).json({ error: "User not found" });
-    if (currentUser.friends.includes(targetUsername)) {
+    if (currentUser.friends && currentUser.friends.includes(targetUsername)) {
         return res.status(400).json({ error: "You are already friends" });
     }
     if (targetUser.friendRequests && targetUser.friendRequests.includes(currentUsername)) {
@@ -511,7 +431,6 @@ app.post('/api/friend-request/:username', authenticateToken, async (req, res) =>
     if (!targetUser.friendRequests) targetUser.friendRequests = [];
     targetUser.friendRequests.push(currentUsername);
     
-    // Add notification
     if (!targetUser.notifications) targetUser.notifications = [];
     targetUser.notifications.unshift({
         id: Date.now(),
@@ -539,17 +458,14 @@ app.post('/api/friend-accept/:username', authenticateToken, async (req, res) => 
         return res.status(400).json({ error: "No friend request from this user" });
     }
     
-    // Remove from requests
     currentUser.friendRequests = currentUser.friendRequests.filter(u => u !== requesterUsername);
     
-    // Add to friends lists
     if (!currentUser.friends) currentUser.friends = [];
     if (!requester.friends) requester.friends = [];
     
     currentUser.friends.push(requesterUsername);
     requester.friends.push(currentUsername);
     
-    // Add notification to requester
     if (!requester.notifications) requester.notifications = [];
     requester.notifications.unshift({
         id: Date.now(),
@@ -629,7 +545,6 @@ app.post('/api/follow/:username', authenticateToken, async (req, res) => {
     currentUser.following.push(targetUsername);
     targetUser.followers.push(currentUsername);
     
-    // Add notification
     if (!targetUser.notifications) targetUser.notifications = [];
     targetUser.notifications.unshift({
         id: Date.now(),
@@ -664,24 +579,6 @@ app.post('/api/unfollow/:username', authenticateToken, async (req, res) => {
     
     writeUsers(users);
     res.json({ success: true, message: `Unfollowed ${targetUsername}` });
-});
-
-// ============= PROFILE EDITING =============
-
-// Edit profile
-app.put('/api/profile', authenticateToken, async (req, res) => {
-    const currentUsername = req.user.username;
-    const { displayName, about, avatar, discord, status } = req.body;
-    
-    const updatedUser = await updateUserProfile(currentUsername, {
-        displayName, about, avatar, discord, status
-    });
-    
-    if (!updatedUser) {
-        return res.status(404).json({ error: "User not found" });
-    }
-    
-    res.json({ success: true, user: updatedUser });
 });
 
 // ============= ROLE SYSTEM (Owner Only) =============
@@ -754,7 +651,6 @@ app.post('/api/roles/assign', authenticateToken, (req, res) => {
     
     writeUsers(users);
     
-    // Add notification to user
     if (!targetUser.notifications) targetUser.notifications = [];
     targetUser.notifications.unshift({
         id: Date.now(),
@@ -766,78 +662,6 @@ app.post('/api/roles/assign', authenticateToken, (req, res) => {
     writeUsers(users);
     
     res.json({ success: true, message: `Role assigned to ${targetUsername}` });
-});
-
-// ============= CHAT SYSTEM =============
-
-// Post chat message
-app.post('/api/chat', authenticateToken, (req, res) => {
-    const { message } = req.body;
-    const username = req.user.username;
-    
-    if (!message || message.trim().length === 0) {
-        return res.status(400).json({ error: 'Message cannot be empty' });
-    }
-    if (message.length > 500) {
-        return res.status(400).json({ error: 'Message too long (max 500 characters)' });
-    }
-    
-    const moderation = advancedModerationCheck(message, username);
-    
-    if (!moderation.allowed) {
-        return res.status(403).json({ error: 'Message blocked by moderation', reason: moderation.reason, blocked: true });
-    }
-    
-    // Log chat for moderation
-    const data = readData();
-    if (!data.chatLogs) data.chatLogs = [];
-    data.chatLogs.unshift({
-        id: Date.now(),
-        username,
-        message: message,
-        timestamp: new Date().toISOString()
-    });
-    if (data.chatLogs.length > 1000) data.chatLogs = data.chatLogs.slice(0, 1000);
-    writeData(data);
-    
-    res.json({
-        success: true,
-        message: message,
-        username: username,
-        timestamp: new Date().toISOString()
-    });
-});
-
-// Get chat logs (Admin only)
-app.get('/api/admin/moderation-logs', authenticateToken, (req, res) => {
-    const adminUsers = ['realgysj', 'plstealme2'];
-    if (!adminUsers.includes(req.user.username.toLowerCase())) {
-        return res.status(403).json({ error: 'Admin access required' });
-    }
-    const data = readData();
-    res.json({ total: (data.chatLogs || []).length, logs: (data.chatLogs || []).slice(0, 100) });
-});
-
-// ============= ROLE MODIFIER API (Owner Only) =============
-app.post('/api/admin/set-role', authenticateToken, (req, res) => {
-    if (req.user.username.toLowerCase() !== 'realgysj') {
-        return res.status(403).json({ error: 'Forbidden: Only the Owner can reassign platform roles.' });
-    }
-
-    const { targetUsername, newRole, isModerator, isBooster, roleBadge, roleColor } = req.body;
-    const users = readUsers();
-    const index = users.findIndex(u => u.username.toLowerCase() === targetUsername.toLowerCase());
-
-    if (index === -1) return res.status(404).json({ error: 'Target member profile not found.' });
-
-    if (newRole !== undefined) users[index].role = newRole;
-    if (roleBadge !== undefined) users[index].roleBadge = roleBadge;
-    if (roleColor !== undefined) users[index].roleColor = roleColor;
-    if (isModerator !== undefined) users[index].isModerator = isModerator;
-    if (isBooster !== undefined) users[index].isBooster = isBooster;
-
-    writeUsers(users);
-    res.json({ success: true, message: `Successfully updated roles and flags for ${targetUsername}` });
 });
 
 // ============= TRANSACTION SYSTEM =============
@@ -965,7 +789,6 @@ app.post('/api/migrate-ids', (req, res) => {
             data.nextId = (data.nextId || 1) + 1;
             changed = true;
         }
-        // Add missing fields for existing users
         if (user.followers === undefined) user.followers = [];
         if (user.following === undefined) user.following = [];
         if (user.friends === undefined) user.friends = [];
@@ -976,12 +799,26 @@ app.post('/api/migrate-ids', (req, res) => {
         if (user.roleBadge === undefined) user.roleBadge = user.isModerator ? "🔨" : (user.isOwner ? "👑" : "");
         if (user.roleColor === undefined) user.roleColor = user.isModerator ? "#00aaff" : (user.isOwner ? "#ffcc00" : "#888888");
         if (user.isBooster === undefined) user.isBooster = false;
+        
+        // Ensure owner has correct badge
+        if (user.username === 'realgysj') {
+            user.isOwner = true;
+            user.role = "Owner";
+            user.roleBadge = "👑";
+            user.roleColor = "#ffcc00";
+        }
+        if (user.username === 'plstealme2') {
+            user.isModerator = true;
+            user.role = "Moderator";
+            user.roleBadge = "🔨";
+            user.roleColor = "#00aaff";
+        }
     });
     if (changed) {
         if (!data.nextId) data.nextId = data.users.length + 1;
         writeData(data);
     }
-    res.json({ message: 'Migration completed', users: data.users.map(u => ({ id: u.id, username: u.username })) });
+    res.json({ message: 'Migration completed', users: data.users.map(u => ({ id: u.id, username: u.username, roleBadge: u.roleBadge })) });
 });
 
 app.get('/api/health', (req, res) => {
@@ -995,11 +832,12 @@ app.listen(PORT, () => {
     console.log(`📡 Running on: http://localhost:${PORT}`);
     console.log(`🔗 Frontend URL: ${FRONTEND_URL}`);
     console.log(`========================================`);
-    console.log(`✨ New Features:`);
+    console.log(`✨ Features:`);
+    console.log(`   • Owner: realgysj 👑`);
+    console.log(`   • Moderator: plstealme2 🔨`);
     console.log(`   • Friend System (send/accept/decline)`);
     console.log(`   • Follow System (follow/unfollow)`);
     console.log(`   • Profile Editing (about, discord, status, avatar)`);
     console.log(`   • Role System (Owner can create custom roles)`);
-    console.log(`   • Booster & Moderator badges`);
     console.log(`========================================\n`);
 });
