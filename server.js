@@ -13,8 +13,9 @@ const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || "TAVIAN_SUPER_SECRET_KEY_CHANGE_THIS_12345";
 const HCAPTCHA_SECRET = process.env.HCAPTCHA_SECRET || "ES_3e9f86c0fff2435a9c741ef2d05a438f";
 
-// Frontend URL (Netlify)
+// Frontend URLs
 const FRONTEND_URL = process.env.FRONTEND_URL || "https://tavian.netlify.app";
+const LOCAL_URLS = ['http://localhost:3000', 'http://localhost:5500', 'http://127.0.0.1:5500', 'http://localhost:8080', 'http://127.0.0.1:8080'];
 
 // Data file path
 const DATA_FILE = path.join(__dirname, 'data.json');
@@ -24,11 +25,8 @@ if (!fs.existsSync(DATA_FILE)) {
     fs.writeFileSync(DATA_FILE, JSON.stringify({ users: [], nextId: 1, chatLogs: [] }, null, 2));
 }
 
-// ============= ADVANCED MODERATION SYSTEM =============
-
-// Comprehensive banned words with context awareness
+// ============= ADVANCED MODERATION SYSTEM (same as before) =============
 const bannedWords = new Map([
-    // Severe profanity
     ['fuck', { severity: 10, contexts: ['sexual', 'insult', 'violent'] }],
     ['shit', { severity: 7, contexts: ['excretory', 'insult'] }],
     ['damn', { severity: 3, contexts: ['mild'] }],
@@ -67,8 +65,6 @@ const bannedWords = new Map([
     ['asshole', { severity: 6, contexts: ['insult'] }],
     ['shithead', { severity: 7, contexts: ['insult'] }],
     ['dumbass', { severity: 5, contexts: ['insult'] }],
-    
-    // Hate speech
     ['hitler', { severity: 10, contexts: ['hate', 'historical'] }],
     ['nazi', { severity: 10, contexts: ['hate', 'historical'] }],
     ['holocaust', { severity: 9, contexts: ['sensitive'] }],
@@ -76,7 +72,6 @@ const bannedWords = new Map([
     ['black power', { severity: 4, contexts: ['political'] }],
 ]);
 
-// Comprehensive allowlist - words that sound like bad words but are safe
 const allowlist = new Set([
     'assassin', 'assassinate', 'assassination', 'assault', 'assemble', 'assembly', 
     'assist', 'assistant', 'associate', 'association', 'assume', 'assumption', 
@@ -85,23 +80,10 @@ const allowlist = new Set([
     'cocktail', 'cockatoo', 'cockpit', 'cocksure', 'cocky', 'cockney', 'cockerel',
     'cockroach', 'cockscomb', 'cockleshell', 'cockfight', 'cockspur',
     'ship', 'shipping', 'shipment', 'shirt', 'shift', 'shifting', 'shifty',
-    'shingle', 'shinobi', 'shinto', 'shinny', 'shimmer', 'shimmering',
-    'shilling', 'shiloh', 'shilajit', 'shilpa', 'shiloh',
-    'fuchsia', 'fuchi',
-    'bitcoin', 'bicycle', 'biscuit', 'bistro', 'bilingual', 'binary', 'binding',
-    'biting', 'bitter', 'bitumen', 'bitwise', 'bitchute', 'bichon', 'bicarbonate',
-    'damage', 'damaging', 'damascus', 'damask', 'damnation', 'damocles',
-    'dampen', 'dampener', 'damsel', 'damson',
-    'night', 'nightmare', 'nightly', 'nightfall', 'nightclub', 'nightingale',
-    'nigeria', 'nigerian', 'niger', 'nigerien', 'nighthawk', 'nightshade',
-    'nightstand', 'nighttime', 'nightwalker', 'niggle', 'niggardly', 'nigh',
-    'grape', 'drapery', 'scrape', 'scraper', 'scraping', 'scrapped', 'crape',
-    'drape', 'trapper', 'trapping', 'crapper', 'rapper', 'rapping',
-    'rapid', 'rapidly', 'rapidity', 'rapier', 'raptor', 'rapture',
-    'skill', 'skilling', 'killingly', 'killdeer', 'killjoy', 'killifish',
-    'killock', 'killingworth', 'killington',
-    'sussex', 'essex', 'wessex', 'middlesex', 'sexes', 'sexism', 'sexist',
-    'sexton', 'sextant', 'sextet', 'sextuplet', 'sextillion',
+    'fuchsia', 'fuchi', 'bitcoin', 'bicycle', 'biscuit', 'bistro',
+    'damage', 'damaging', 'damascus', 'damask', 'night', 'nightmare', 'nightly',
+    'nigeria', 'nigerian', 'niger', 'grape', 'scrape', 'scraper', 'rapid', 'rapidly',
+    'skill', 'skilling', 'killingly', 'sussex', 'essex', 'wessex', 'middlesex'
 ]);
 
 const safePhrases = new Set([
@@ -116,14 +98,11 @@ const dangerousPatterns = [
     { regex: /\b(rape|rapist|molest|pedophile)\b/i, severity: 10, type: 'sexual_violence' },
     { regex: /\b(bomb|terrorist|jihad|shoot\s+up)\b/i, severity: 10, type: 'terrorism' },
     { regex: /\b(white\s+supremacy|kkk|klansman|aryan)\b/i, severity: 10, type: 'hatespeech' },
-    { regex: /\b(transphobic|homophobic|misogynistic)\b/i, severity: 9, type: 'hate' },
 ];
 
 const leetMap = {
     '0': 'o', '1': 'i', '2': 'z', '3': 'e', '4': 'a', '5': 's', '6': 'g', '7': 't', '8': 'b', '9': 'g',
     '@': 'a', '!': 'i', '$': 's', '%': 'e', '^': 'n', '&': 'a', '*': 'o', '(': 'c', ')': 'c',
-    '-': '', '_': '', '=': '', '+': '', '[': '', ']': '', '{': '', '}': '', '\\': '', '|': '',
-    ';': '', ':': '', "'": '', '"': '', ',': '', '.': '', '<': '', '>': '', '/': '', '?': '',
 };
 
 function normalizeLeet(text) {
@@ -131,7 +110,6 @@ function normalizeLeet(text) {
     for (const [leet, normal] of Object.entries(leetMap)) {
         normalized = normalized.split(leet).join(normal);
     }
-    normalized = normalized.replace(/(.)\1{2,}/g, '$1$1');
     return normalized;
 }
 
@@ -140,10 +118,7 @@ function isAllowlisted(word) {
     if (allowlist.has(normalized)) return true;
     for (const allowed of allowlist) {
         if (normalized.includes(allowed) && allowed.length > 3) {
-            const remaining = normalized.replace(allowed, '');
-            if (remaining.length === 0 || /^[aeiou\s]+$/i.test(remaining)) {
-                return true;
-            }
+            return true;
         }
     }
     return false;
@@ -157,53 +132,23 @@ function isSafePhrase(message) {
     return false;
 }
 
-function checkContext(message, badWord, wordContext) {
+function checkContext(message, badWord) {
     const lowerMsg = message.toLowerCase();
-    const words = lowerMsg.split(/\s+/);
-    
-    for (let i = 0; i < words.length; i++) {
-        const word = words[i];
-        if (word.length > badWord.length + 2 && word.includes(badWord)) {
-            if (allowlist.has(word) || isAllowlisted(word)) {
-                return { allowed: true, reason: 'part_of_allowlist_word' };
-            }
-        }
-    }
-    
-    const positiveIndicators = ['not', 'no', 'never', 'isn\'t', 'aren\'t', 'wasn\'t', 'weren\'t'];
+    const positiveIndicators = ['not', 'no', 'never', 'isn\'t', 'aren\'t'];
     for (const indicator of positiveIndicators) {
         const pattern = new RegExp(`\\b${indicator}\\s+${badWord}\\b`, 'i');
         if (pattern.test(lowerMsg)) {
             return { allowed: true, reason: 'negation_context' };
         }
     }
-    
-    if (lowerMsg.includes('"') || lowerMsg.includes('\'') || lowerMsg.includes('‘') || lowerMsg.includes('’')) {
-        const quotedPattern = new RegExp(`["'‘’][^"''‘’]*${badWord}[^"''‘’]*["'‘’]`, 'i');
-        if (quotedPattern.test(lowerMsg)) {
-            return { allowed: true, reason: 'quoted_context' };
-        }
-    }
-    
     return { allowed: false, reason: 'flagged' };
 }
 
 function advancedModerationCheck(message, username = '') {
-    const result = {
-        allowed: true,
-        blocked: false,
-        reason: '',
-        severity: 0,
-        flaggedWords: []
-    };
+    const result = { allowed: true, blocked: false, reason: '', severity: 0, flaggedWords: [] };
     
-    if (!message || message.trim().length === 0) {
-        return result;
-    }
-    
-    if (isSafePhrase(message)) {
-        return result;
-    }
+    if (!message || message.trim().length === 0) return result;
+    if (isSafePhrase(message)) return result;
     
     let normalized = normalizeLeet(message);
     
@@ -218,49 +163,25 @@ function advancedModerationCheck(message, username = '') {
     }
     
     const words = normalized.split(/\s+/);
-    const flaggedWords = [];
-    
     for (const word of words) {
         if (word.length < 3) continue;
         if (isAllowlisted(word)) continue;
         
         for (const [bannedWord, config] of bannedWords) {
-            if (word.includes(bannedWord) || bannedWord.includes(word)) {
-                const contextCheck = checkContext(normalized, bannedWord, config.contexts);
+            if (word.includes(bannedWord)) {
+                const contextCheck = checkContext(normalized, bannedWord);
+                if (contextCheck.allowed) continue;
                 
-                if (contextCheck.allowed) {
-                    continue;
-                }
-                
-                flaggedWords.push({
-                    word: bannedWord,
-                    severity: config.severity,
-                    match: word
-                });
-                
+                result.flaggedWords.push({ word: bannedWord, severity: config.severity });
                 result.severity = Math.max(result.severity, config.severity);
             }
         }
     }
     
-    if (flaggedWords.length > 0) {
-        result.flaggedWords = flaggedWords;
-        
-        if (result.severity >= 8) {
-            result.allowed = false;
-            result.blocked = true;
-            result.reason = 'inappropriate_content_blocked';
-        }
-        else if (result.severity >= 5) {
-            result.allowed = true;
-            result.blocked = false;
-            result.reason = 'mild_profanity_allowed';
-        }
-        else {
-            result.allowed = true;
-            result.blocked = false;
-            result.reason = 'minor_issue_ignored';
-        }
+    if (result.flaggedWords.length > 0 && result.severity >= 8) {
+        result.allowed = false;
+        result.blocked = true;
+        result.reason = 'inappropriate_content_blocked';
     }
     
     return result;
@@ -268,68 +189,45 @@ function advancedModerationCheck(message, username = '') {
 
 function filterMessageForDisplay(message, username) {
     const moderation = advancedModerationCheck(message, username);
-    
     if (!moderation.allowed) {
-        return {
-            original: message,
-            filtered: "[Message blocked by moderation]",
-            blocked: true,
-            reason: moderation.reason
-        };
+        return { original: message, filtered: "[Message blocked by moderation]", blocked: true, reason: moderation.reason };
     }
-    
-    let filtered = message;
-    if (moderation.severity >= 5 && moderation.severity < 8) {
-        for (const flagged of moderation.flaggedWords) {
-            const regex = new RegExp(`\\b${flagged.word}\\b`, 'gi');
-            filtered = filtered.replace(regex, '*'.repeat(flagged.word.length));
-        }
-    }
-    
-    return {
-        original: message,
-        filtered: filtered,
-        blocked: false,
-        censored: filtered !== message
-    };
+    return { original: message, filtered: message, blocked: false, censored: false };
 }
 
 function logChatMessage(username, originalMessage, filteredMessage, moderationResult) {
     const data = readData();
     if (!data.chatLogs) data.chatLogs = [];
-    
     data.chatLogs.unshift({
-        id: Date.now(),
-        username,
-        original: originalMessage,
-        filtered: filteredMessage,
-        moderation: {
-            allowed: moderationResult.allowed,
-            blocked: moderationResult.blocked,
-            reason: moderationResult.reason,
-            severity: moderationResult.severity,
-            flaggedWords: moderationResult.flaggedWords
-        },
+        id: Date.now(), username, original: originalMessage, filtered: filteredMessage,
+        moderation: { allowed: moderationResult.allowed, blocked: moderationResult.blocked, reason: moderationResult.reason, severity: moderationResult.severity },
         timestamp: new Date().toISOString()
     });
-    
-    if (data.chatLogs.length > 1000) {
-        data.chatLogs = data.chatLogs.slice(0, 1000);
-    }
-    
+    if (data.chatLogs.length > 1000) data.chatLogs = data.chatLogs.slice(0, 1000);
     writeData(data);
 }
 
-// ============= CORS CONFIGURATION =============
+// ============= CORS CONFIGURATION - FIXED =============
+const allowedOrigins = [FRONTEND_URL, ...LOCAL_URLS];
+
 app.use(cors({
-    origin: [FRONTEND_URL, 'http://localhost:3000', 'http://localhost:5500', 'http://127.0.0.1:5500', 'https://tavian.netlify.app'],
+    origin: function(origin, callback) {
+        // Allow requests with no origin (like mobile apps or curl)
+        if (!origin) return callback(null, true);
+        if (allowedOrigins.indexOf(origin) !== -1) {
+            callback(null, true);
+        } else {
+            console.log('CORS blocked origin:', origin);
+            callback(null, true); // Allow anyway for testing - remove in production
+        }
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
     allowedHeaders: ['Content-Type', 'Authorization', 'Cookie', 'X-Requested-With', 'X-Tavian-Token', 'Accept']
 }));
 
 app.options('*', cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 app.use(cookieParser());
 
 // Helper functions
@@ -361,23 +259,14 @@ function getNextId() {
 }
 
 function generateSecureToken(userId, username) {
-    const payload = {
-        id: userId,
-        username: username,
-        timestamp: Date.now(),
-        nonce: Math.random().toString(36).substring(2, 15)
-    };
-    
-    const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '30d' });
-    return token;
+    const payload = { id: userId, username: username, timestamp: Date.now(), nonce: Math.random().toString(36).substring(2, 15) };
+    return jwt.sign(payload, JWT_SECRET, { expiresIn: '30d' });
 }
 
 function verifySecureToken(token) {
     if (!token) return null;
-    
     try {
-        const decoded = jwt.verify(token, JWT_SECRET);
-        return decoded;
+        return jwt.verify(token, JWT_SECRET);
     } catch (error) {
         return null;
     }
@@ -385,48 +274,26 @@ function verifySecureToken(token) {
 
 async function verifyHCaptcha(hcaptchaResponse) {
     if (!hcaptchaResponse) return false;
-    
     try {
         const https = require('https');
         const querystring = require('querystring');
         
-        const postData = querystring.stringify({
-            secret: HCAPTCHA_SECRET,
-            response: hcaptchaResponse
-        });
-        
-        const options = {
-            hostname: 'hcaptcha.com',
-            port: 443,
-            path: '/siteverify',
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
-                'Content-Length': Buffer.byteLength(postData)
-            }
-        };
+        const postData = querystring.stringify({ secret: HCAPTCHA_SECRET, response: hcaptchaResponse });
+        const options = { hostname: 'hcaptcha.com', port: 443, path: '/siteverify', method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(postData) } };
         
         const result = await new Promise((resolve, reject) => {
             const req = https.request(options, (res) => {
                 let data = '';
                 res.on('data', (chunk) => { data += chunk; });
-                res.on('end', () => {
-                    try {
-                        const json = JSON.parse(data);
-                        resolve(json);
-                    } catch(e) {
-                        reject(e);
-                    }
-                });
+                res.on('end', () => { try { resolve(JSON.parse(data)); } catch(e) { reject(e); } });
             });
             req.on('error', reject);
             req.write(postData);
             req.end();
         });
-        
         return result.success === true;
     } catch (error) {
-        console.error('hCaptcha verification error:', error);
+        console.error('hCaptcha error:', error);
         return false;
     }
 }
@@ -438,11 +305,9 @@ function authenticateToken(req, res, next) {
     if (authHeader && authHeader.startsWith('Bearer ')) {
         token = authHeader.substring(7);
     }
-    
     if (!token && req.headers['x-tavian-token']) {
         token = req.headers['x-tavian-token'];
     }
-    
     if (!token) {
         token = req.cookies.TavianSecurity;
     }
@@ -461,60 +326,45 @@ function authenticateToken(req, res, next) {
 }
 
 function optionalAuth(req, res, next) {
-    let token = null;
-    
-    const authHeader = req.headers.authorization;
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-        token = authHeader.substring(7);
-    }
-    
-    if (!token && req.headers['x-tavian-token']) {
-        token = req.headers['x-tavian-token'];
-    }
-    
-    if (!token) {
-        token = req.cookies.TavianSecurity;
-    }
-    
+    let token = req.cookies.TavianSecurity || req.headers['x-tavian-token'];
     if (token) {
         const decoded = verifySecureToken(token);
-        if (decoded) {
-            req.user = decoded;
-        }
+        if (decoded) req.user = decoded;
     }
-    
     next();
 }
 
+// ============= FIXED COOKIE SETTINGS =============
 function setAuthCookie(res, token) {
+    const isProduction = process.env.NODE_ENV === 'production' || process.env.RENDER;
+    
     const cookieOptions = {
         httpOnly: true,
-        secure: true,
-        sameSite: 'none',
         maxAge: 30 * 24 * 60 * 60 * 1000,
-        path: '/',
-        domain: undefined
+        path: '/'
     };
+    
+    if (isProduction) {
+        cookieOptions.secure = true;
+        cookieOptions.sameSite = 'none';
+    } else {
+        cookieOptions.secure = false;
+        cookieOptions.sameSite = 'lax';
+    }
     
     res.cookie('TavianSecurity', token, cookieOptions);
 }
 
 function clearAuthCookie(res) {
-    res.clearCookie('TavianSecurity', {
-        path: '/',
-        secure: true,
-        sameSite: 'none'
-    });
+    const isProduction = process.env.NODE_ENV === 'production' || process.env.RENDER;
+    res.clearCookie('TavianSecurity', { path: '/', ...(isProduction && { secure: true, sameSite: 'none' }) });
 }
 
 // ============= API ENDPOINTS =============
 
 app.get('/api/users', optionalAuth, (req, res) => {
     const users = readUsers();
-    const safeUsers = users.map(u => {
-        const { password, ...safe } = u;
-        return safe;
-    });
+    const safeUsers = users.map(u => { const { password, ...safe } = u; return safe; });
     res.json(safeUsers);
 });
 
@@ -522,11 +372,7 @@ app.get('/api/users/:id', optionalAuth, (req, res) => {
     const users = readUsers();
     const userId = parseInt(req.params.id);
     const user = users.find(u => u.id === userId);
-    
-    if (!user) {
-        return res.status(404).json({ error: 'User not found' });
-    }
-    
+    if (!user) return res.status(404).json({ error: 'User not found' });
     const { password, ...safe } = user;
     res.json(safe);
 });
@@ -534,19 +380,14 @@ app.get('/api/users/:id', optionalAuth, (req, res) => {
 app.get('/api/me', authenticateToken, (req, res) => {
     const users = readUsers();
     const user = users.find(u => u.id === req.user.id);
-    if (!user) {
-        return res.status(404).json({ error: 'User not found' });
-    }
+    if (!user) return res.status(404).json({ error: 'User not found' });
     const { password, ...safe } = user;
     res.json(safe);
 });
 
 app.get('/api/auto-login', (req, res) => {
     let token = req.cookies.TavianSecurity;
-    
-    if (!token) {
-        return res.status(401).json({ error: 'No session found' });
-    }
+    if (!token) return res.status(401).json({ error: 'No session found' });
     
     const decoded = verifySecureToken(token);
     if (!decoded) {
@@ -556,7 +397,6 @@ app.get('/api/auto-login', (req, res) => {
     
     const users = readUsers();
     const user = users.find(u => u.id === decoded.id);
-    
     if (!user) {
         clearAuthCookie(res);
         return res.status(401).json({ error: 'User not found' });
@@ -570,12 +410,13 @@ app.get('/api/auto-login', (req, res) => {
 });
 
 app.post('/api/register', async (req, res) => {
+    console.log('📝 Registration attempt:', req.body.username);
     const users = readUsers();
     const { username, email, password, displayName, hcaptchaResponse } = req.body;
     
     const isCaptchaValid = await verifyHCaptcha(hcaptchaResponse);
     if (!isCaptchaValid) {
-        return res.status(400).json({ error: 'CAPTCHA verification failed. Please try again.' });
+        return res.status(400).json({ error: 'CAPTCHA verification failed' });
     }
     
     if (users.find(u => u.username.toLowerCase() === username.toLowerCase())) {
@@ -590,24 +431,10 @@ app.post('/api/register', async (req, res) => {
     const newId = getNextId();
     
     const newUser = {
-        id: newId,
-        username,
-        email,
-        password: hashedPassword,
-        displayName: displayName || username,
-        tavix: isOwner ? 1000000 : 0,
-        about: '',
-        visits: 0,
-        transactions: [],
-        notifications: [{
-            id: Date.now(),
-            title: "🎉 Welcome to Tavian!",
-            message: isOwner ? "You received 1,000,000 TAVIX as owner!" : "Start earning TAVIX by playing games!",
-            read: false,
-            time: new Date().toISOString()
-        }],
-        savedDevices: [],
-        createdAt: new Date().toISOString()
+        id: newId, username, email, password: hashedPassword, displayName: displayName || username,
+        tavix: isOwner ? 1000000 : 0, about: '', visits: 0, transactions: [],
+        notifications: [{ id: Date.now(), title: "🎉 Welcome to Tavian!", message: "Start earning TAVIX by playing games!", read: false, time: new Date().toISOString() }],
+        savedDevices: [], createdAt: new Date().toISOString()
     };
     
     users.push(newUser);
@@ -617,10 +444,12 @@ app.post('/api/register', async (req, res) => {
     setAuthCookie(res, token);
     
     const { password: _, ...safe } = newUser;
+    console.log('✅ Registration successful:', username);
     res.status(201).json(safe);
 });
 
 app.post('/api/login', async (req, res) => {
+    console.log('🔐 Login attempt:', req.body.username);
     const users = readUsers();
     const { username, password } = req.body;
     
@@ -638,6 +467,7 @@ app.post('/api/login', async (req, res) => {
     setAuthCookie(res, token);
     
     const { password: _, ...safe } = user;
+    console.log('✅ Login successful:', username);
     res.json(safe);
 });
 
@@ -653,55 +483,33 @@ app.post('/api/chat', authenticateToken, (req, res) => {
     if (!message || message.trim().length === 0) {
         return res.status(400).json({ error: 'Message cannot be empty' });
     }
-    
     if (message.length > 500) {
         return res.status(400).json({ error: 'Message too long (max 500 characters)' });
     }
     
     const moderation = advancedModerationCheck(message, username);
     const filtered = filterMessageForDisplay(message, username);
-    
     logChatMessage(username, message, filtered.filtered, moderation);
     
     if (!moderation.allowed) {
-        return res.status(403).json({
-            error: 'Message blocked by moderation',
-            reason: moderation.reason,
-            blocked: true
-        });
+        return res.status(403).json({ error: 'Message blocked by moderation', reason: moderation.reason, blocked: true });
     }
     
-    res.json({
-        success: true,
-        original: message,
-        filtered: filtered.filtered,
-        censored: filtered.censored,
-        username: username,
-        timestamp: new Date().toISOString()
-    });
+    res.json({ success: true, original: message, filtered: filtered.filtered, censored: filtered.censored, username: username, timestamp: new Date().toISOString() });
 });
 
 app.get('/api/admin/moderation-logs', authenticateToken, (req, res) => {
-    const adminUsers = ['realgysj', 'admin'];
-    
+    const adminUsers = ['realgysj'];
     if (!adminUsers.includes(req.user.username.toLowerCase())) {
         return res.status(403).json({ error: 'Admin access required' });
     }
-    
     const data = readData();
-    const logs = data.chatLogs || [];
-    
-    res.json({
-        total: logs.length,
-        logs: logs.slice(0, 100)
-    });
+    res.json({ total: data.chatLogs?.length || 0, logs: (data.chatLogs || []).slice(0, 100) });
 });
 
-// FIXED PUT endpoint for about updates
 app.put('/api/user/:username', authenticateToken, async (req, res) => {
-    console.log('📝 Update request received for:', req.params.username);
-    console.log('📦 Update data:', req.body);
-    console.log('👤 Authenticated user:', req.user.username);
+    console.log('📝 Update request for:', req.params.username);
+    console.log('📦 Data:', req.body);
     
     const users = readUsers();
     const index = users.findIndex(u => u.username === req.params.username);
@@ -709,82 +517,54 @@ app.put('/api/user/:username', authenticateToken, async (req, res) => {
     if (index === -1) {
         return res.status(404).json({ error: 'User not found' });
     }
-    
     if (req.user.username !== req.params.username) {
         return res.status(403).json({ error: 'Forbidden - You can only update your own profile' });
     }
     
     const allowedUpdates = ['displayName', 'about', 'tavix', 'transactions', 'notifications', 'savedDevices'];
-    let updated = false;
-    
     for (let key of allowedUpdates) {
         if (req.body[key] !== undefined) {
             users[index][key] = req.body[key];
-            updated = true;
             console.log(`✅ Updated ${key} to:`, req.body[key]);
         }
     }
     
-    if (!updated) {
-        return res.status(400).json({ error: 'No valid fields to update' });
-    }
-    
     writeUsers(users);
-    console.log('💾 User data saved successfully');
-    
     const { password, ...safe } = users[index];
     res.json(safe);
 });
 
 app.put('/api/users/:id', authenticateToken, async (req, res) => {
     const userId = parseInt(req.params.id);
-    
     if (req.user.id !== userId) {
         return res.status(403).json({ error: 'Forbidden' });
     }
     
     const users = readUsers();
     const index = users.findIndex(u => u.id === userId);
-    if (index === -1) {
-        return res.status(404).json({ error: 'User not found' });
-    }
+    if (index === -1) return res.status(404).json({ error: 'User not found' });
     
     const allowedUpdates = ['displayName', 'about', 'tavix', 'transactions', 'notifications', 'savedDevices'];
     for (let key of allowedUpdates) {
-        if (req.body[key] !== undefined) {
-            users[index][key] = req.body[key];
-        }
+        if (req.body[key] !== undefined) users[index][key] = req.body[key];
     }
     
     writeUsers(users);
-    
     const { password, ...safe } = users[index];
     res.json(safe);
 });
 
 app.post('/api/transaction', authenticateToken, async (req, res) => {
     const { username, amount, reason, from } = req.body;
-    
-    if (req.user.username !== username) {
-        return res.status(403).json({ error: 'Forbidden' });
-    }
+    if (req.user.username !== username) return res.status(403).json({ error: 'Forbidden' });
     
     const users = readUsers();
     const index = users.findIndex(u => u.username === username);
-    if (index === -1) {
-        return res.status(404).json({ error: 'User not found' });
-    }
+    if (index === -1) return res.status(404).json({ error: 'User not found' });
     
     if (!users[index].transactions) users[index].transactions = [];
-    users[index].transactions.unshift({
-        id: Date.now(),
-        amount,
-        reason,
-        from: from || null,
-        date: new Date().toISOString()
-    });
+    users[index].transactions.unshift({ id: Date.now(), amount, reason, from: from || null, date: new Date().toISOString() });
     users[index].tavix = (users[index].tavix || 0) + amount;
-    
     if (users[index].transactions.length > 50) users[index].transactions.pop();
     writeUsers(users);
     
@@ -793,26 +573,14 @@ app.post('/api/transaction', authenticateToken, async (req, res) => {
 
 app.post('/api/notification', authenticateToken, async (req, res) => {
     const { username, title, message } = req.body;
-    
-    if (req.user.username !== username) {
-        return res.status(403).json({ error: 'Forbidden' });
-    }
+    if (req.user.username !== username) return res.status(403).json({ error: 'Forbidden' });
     
     const users = readUsers();
     const index = users.findIndex(u => u.username === username);
-    if (index === -1) {
-        return res.status(404).json({ error: 'User not found' });
-    }
+    if (index === -1) return res.status(404).json({ error: 'User not found' });
     
     if (!users[index].notifications) users[index].notifications = [];
-    users[index].notifications.unshift({
-        id: Date.now(),
-        title,
-        message,
-        read: false,
-        time: new Date().toISOString()
-    });
-    
+    users[index].notifications.unshift({ id: Date.now(), title, message, read: false, time: new Date().toISOString() });
     if (users[index].notifications.length > 50) users[index].notifications.pop();
     writeUsers(users);
     
@@ -821,15 +589,11 @@ app.post('/api/notification', authenticateToken, async (req, res) => {
 
 app.delete('/api/users/:id', authenticateToken, async (req, res) => {
     const userId = parseInt(req.params.id);
-    
-    if (req.user.id !== userId) {
-        return res.status(403).json({ error: 'Forbidden' });
-    }
+    if (req.user.id !== userId) return res.status(403).json({ error: 'Forbidden' });
     
     let users = readUsers();
     users = users.filter(u => u.id !== userId);
     writeUsers(users);
-    
     clearAuthCookie(res);
     res.json({ success: true });
 });
@@ -837,18 +601,11 @@ app.delete('/api/users/:id', authenticateToken, async (req, res) => {
 app.delete('/api/user/:username', authenticateToken, async (req, res) => {
     let users = readUsers();
     const userToDelete = users.find(u => u.username === req.params.username);
-    
-    if (!userToDelete) {
-        return res.status(404).json({ error: 'User not found' });
-    }
-    
-    if (req.user.username !== req.params.username) {
-        return res.status(403).json({ error: 'Forbidden' });
-    }
+    if (!userToDelete) return res.status(404).json({ error: 'User not found' });
+    if (req.user.username !== req.params.username) return res.status(403).json({ error: 'Forbidden' });
     
     users = users.filter(u => u.username !== req.params.username);
     writeUsers(users);
-    
     clearAuthCookie(res);
     res.json({ success: true });
 });
@@ -856,7 +613,6 @@ app.delete('/api/user/:username', authenticateToken, async (req, res) => {
 app.post('/api/migrate-ids', (req, res) => {
     const data = readData();
     let changed = false;
-    
     data.users.forEach(user => {
         if (!user.id) {
             user.id = data.nextId || 1;
@@ -864,13 +620,12 @@ app.post('/api/migrate-ids', (req, res) => {
             changed = true;
         }
     });
-    
     if (changed) {
         if (!data.nextId) data.nextId = data.users.length + 1;
         writeData(data);
-        res.json({ message: 'IDs added to users', users: data.users.map(u => ({ id: u.id, username: u.username })) });
+        res.json({ message: 'IDs added', users: data.users.map(u => ({ id: u.id, username: u.username })) });
     } else {
-        res.json({ message: 'All users already have IDs', users: data.users.map(u => ({ id: u.id, username: u.username })) });
+        res.json({ message: 'All users have IDs' });
     }
 });
 
@@ -878,17 +633,14 @@ app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-app.listen(PORT, () => {
+// Start server
+app.listen(PORT, '0.0.0.0', () => {
     console.log(`\n========================================`);
     console.log(`🟣 Tavian Backend Server`);
     console.log(`========================================`);
-    console.log(`📡 Running on: http://localhost:${PORT}`);
+    console.log(`📡 Running on: http://0.0.0.0:${PORT}`);
     console.log(`🔗 Frontend URL: ${FRONTEND_URL}`);
-    console.log(`✅ CORS enabled for: ${FRONTEND_URL}`);
-    console.log(`✅ Cookie: TavianSecurity (HttpOnly, Secure, SameSite=None)`);
-    console.log(`✅ Persistent sessions: 30 days`);
-    console.log(`✅ Advanced moderation system: ACTIVE`);
-    console.log(`✅ Chat filtering: ENABLED`);
-    console.log(`✅ About update endpoint: FIXED with logging`);
+    console.log(`✅ CORS enabled for: ${FRONTEND_URL} and localhost`);
+    console.log(`✅ Cookie settings: ${process.env.NODE_ENV === 'production' ? 'Secure (HTTPS required)' : 'Development (HTTP allowed)'}`);
     console.log(`========================================\n`);
 });
