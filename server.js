@@ -30,7 +30,7 @@ if (process.env.NODE_ENV === 'production') {
 const finalJWTSecret = JWT_SECRET || (process.env.NODE_ENV !== 'production' ? "DEV_JWT_SECRET_KEY" : null);
 const finalHCAPTCHASecret = HCAPTCHA_SECRET || (process.env.NODE_ENV !== 'production' ? "0x0000000000000000000000000000000000000000" : null);
 
-// ============= CORS CONFIGURATION - MULTIPLE FRONTENDS =============
+// ============= CORS CONFIGURATION - FIXED FOR GITHUB PAGES =============
 // Get frontend URLs from environment variables
 let frontendUrls = [];
 
@@ -39,13 +39,13 @@ if (process.env.FRONTEND_URLS) {
     frontendUrls.push(...process.env.FRONTEND_URLS.split(',').map(url => url.trim()));
 }
 
-// Method 2: Individual URL variables (legacy support)
+// Method 2: Individual URL variables
 if (process.env.FRONTEND_URL) frontendUrls.push(process.env.FRONTEND_URL);
 if (process.env.FRONTEND_URL_1) frontendUrls.push(process.env.FRONTEND_URL_1);
 if (process.env.FRONTEND_URL_2) frontendUrls.push(process.env.FRONTEND_URL_2);
 if (process.env.FRONTEND_URL_3) frontendUrls.push(process.env.FRONTEND_URL_3);
 
-// Add common GitHub Pages variations
+// Add all possible GitHub Pages variations
 const githubPagesVariations = [
     'https://defnot67kid-beep.github.io',
     'https://defnot67kid-beep.github.io/',
@@ -86,11 +86,14 @@ const allowedOrigins = [...frontendUrls, ...localUrls];
 console.log('\n✅ CORS Allowed Origins:');
 allowedOrigins.forEach(origin => console.log(`   - ${origin}`));
 
-// CORS middleware
+// CORS middleware - FIXED VERSION
 app.use(cors({
     origin: function(origin, callback) {
         // Allow requests with no origin (like mobile apps or curl)
-        if (!origin) return callback(null, true);
+        if (!origin) {
+            console.log('✅ CORS allowed: no origin (mobile app/curl)');
+            return callback(null, true);
+        }
         
         // Normalize origin by removing trailing slash
         let normalizedOrigin = origin.replace(/\/$/, '');
@@ -101,6 +104,7 @@ app.use(cors({
             callback(null, true);
         } else {
             console.log(`❌ CORS blocked origin: ${origin}`);
+            console.log(`   Allowed origins: ${allowedOrigins.join(', ')}`);
             // In production, block unknown origins strictly
             if (process.env.NODE_ENV === 'production') {
                 callback(new Error(`CORS policy: ${origin} not allowed`));
@@ -113,10 +117,14 @@ app.use(cors({
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Cookie', 'X-Requested-With', 'X-Tavian-Token', 'Accept']
+    allowedHeaders: ['Content-Type', 'Authorization', 'Cookie', 'X-Requested-With', 'X-Tavian-Token', 'Accept'],
+    exposedHeaders: ['Set-Cookie']
 }));
 
+// Handle preflight requests
 app.options('*', cors());
+
+// Body parsing middleware
 app.use(express.json({ limit: '10mb' }));
 app.use(cookieParser());
 
@@ -421,13 +429,12 @@ function setAuthCookie(res, token) {
     const cookieOptions = {
         httpOnly: true,
         maxAge: 30 * 24 * 60 * 60 * 1000,
-        path: '/'
+        path: '/',
+        sameSite: 'none',
+        secure: true
     };
     
-    if (isProduction) {
-        cookieOptions.secure = true;
-        cookieOptions.sameSite = 'none';
-    } else {
+    if (!isProduction) {
         cookieOptions.secure = false;
         cookieOptions.sameSite = 'lax';
     }
@@ -437,7 +444,10 @@ function setAuthCookie(res, token) {
 
 function clearAuthCookie(res) {
     const isProduction = process.env.NODE_ENV === 'production' || process.env.RENDER;
-    res.clearCookie('TavianSecurity', { path: '/', ...(isProduction && { secure: true, sameSite: 'none' }) });
+    res.clearCookie('TavianSecurity', { 
+        path: '/', 
+        ...(isProduction && { secure: true, sameSite: 'none' }) 
+    });
 }
 
 // ============= API ENDPOINTS =============
@@ -587,9 +597,11 @@ app.get('/api/admin/moderation-logs', authenticateToken, (req, res) => {
     res.json({ total: data.chatLogs?.length || 0, logs: (data.chatLogs || []).slice(0, 100) });
 });
 
+// IMPORTANT: This is the endpoint for updating user profile (including about)
 app.put('/api/user/:username', authenticateToken, async (req, res) => {
     console.log('📝 Update request for:', req.params.username);
-    console.log('📦 Data:', req.body);
+    console.log('📦 Request body:', req.body);
+    console.log('🔐 Authenticated user:', req.user.username);
     
     const users = readUsers();
     const index = users.findIndex(u => u.username === req.params.username);
@@ -597,11 +609,16 @@ app.put('/api/user/:username', authenticateToken, async (req, res) => {
     if (index === -1) {
         return res.status(404).json({ error: 'User not found' });
     }
+    
+    // Check if the authenticated user is updating their own profile
     if (req.user.username !== req.params.username) {
+        console.log('❌ Forbidden: User', req.user.username, 'tried to update', req.params.username);
         return res.status(403).json({ error: 'Forbidden - You can only update your own profile' });
     }
     
+    // Allowed fields to update
     const allowedUpdates = ['displayName', 'about', 'tavix', 'transactions', 'notifications', 'savedDevices'];
+    
     for (let key of allowedUpdates) {
         if (req.body[key] !== undefined) {
             users[index][key] = req.body[key];
@@ -610,10 +627,14 @@ app.put('/api/user/:username', authenticateToken, async (req, res) => {
     }
     
     writeUsers(users);
-    const { password, ...safe } = users[index];
-    res.json(safe);
+    
+    // Return user without password
+    const { password, ...safeUser } = users[index];
+    console.log('✅ Profile updated successfully for:', req.params.username);
+    res.json(safeUser);
 });
 
+// Keep the old endpoint for compatibility
 app.put('/api/users/:id', authenticateToken, async (req, res) => {
     const userId = parseInt(req.params.id);
     if (req.user.id !== userId) {
@@ -713,7 +734,7 @@ app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// CORS test endpoint (useful for debugging)
+// CORS test endpoint
 app.get('/api/cors-test', (req, res) => {
     res.json({
         message: 'CORS is configured correctly!',
