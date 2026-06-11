@@ -9,13 +9,91 @@ const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Secret keys - Use environment variables in production!
-const JWT_SECRET = process.env.JWT_SECRET || "TAVIAN_SUPER_SECRET_KEY_CHANGE_THIS_12345";
-const HCAPTCHA_SECRET = process.env.HCAPTCHA_SECRET || "ES_3e9f86c0fff2435a9c741ef2d05a438f";
+// ============= ENVIRONMENT VARIABLES & SECRETS =============
+// In production, ALL secrets MUST be set in Render environment variables
+const JWT_SECRET = process.env.JWT_SECRET;
+const HCAPTCHA_SECRET = process.env.HCAPTCHA_SECRET;
 
-// Frontend URLs
-const FRONTEND_URL = process.env.FRONTEND_URL || "https://tavian.netlify.app";
-const LOCAL_URLS = ['http://localhost:3000', 'http://localhost:5500', 'http://127.0.0.1:5500', 'http://localhost:8080', 'http://127.0.0.1:8080'];
+// Validate required secrets in production
+if (process.env.NODE_ENV === 'production') {
+    if (!JWT_SECRET) {
+        console.error('❌ FATAL: JWT_SECRET environment variable is not set!');
+        process.exit(1);
+    }
+    if (!HCAPTCHA_SECRET) {
+        console.error('❌ FATAL: HCAPTCHA_SECRET environment variable is not set!');
+        process.exit(1);
+    }
+}
+
+// Use fallbacks ONLY for development
+const finalJWTSecret = JWT_SECRET || (process.env.NODE_ENV !== 'production' ? "DEV_JWT_SECRET_KEY" : null);
+const finalHCAPTCHASecret = HCAPTCHA_SECRET || (process.env.NODE_ENV !== 'production' ? "0x0000000000000000000000000000000000000000" : null);
+
+// ============= CORS CONFIGURATION - MULTIPLE FRONTENDS =============
+// Get frontend URLs from environment variables (supports multiple formats)
+let frontendUrls = [];
+
+// Method 1: Comma-separated list in a single variable
+if (process.env.FRONTEND_URLS) {
+    frontendUrls.push(...process.env.FRONTEND_URLS.split(',').map(url => url.trim()));
+}
+
+// Method 2: Individual URL variables (legacy support)
+if (process.env.FRONTEND_URL) frontendUrls.push(process.env.FRONTEND_URL);
+if (process.env.FRONTEND_URL_1) frontendUrls.push(process.env.FRONTEND_URL_1);
+if (process.env.FRONTEND_URL_2) frontendUrls.push(process.env.FRONTEND_URL_2);
+if (process.env.FRONTEND_URL_3) frontendUrls.push(process.env.FRONTEND_URL_3);
+
+// Remove duplicates
+frontendUrls = [...new Set(frontendUrls.filter(Boolean))];
+
+// Default fallbacks (development)
+if (frontendUrls.length === 0) {
+    frontendUrls.push('https://defnot67kid-beep.github.io');
+    if (process.env.NODE_ENV !== 'production') {
+        frontendUrls.push('http://localhost:3000', 'http://localhost:5500', 'http://127.0.0.1:5500');
+    }
+}
+
+// Local development URLs (always allowed in development)
+const localUrls = ['http://localhost:3000', 'http://localhost:5500', 'http://127.0.0.1:5500', 'http://localhost:8080', 'http://127.0.0.1:8080'];
+
+// Combine all allowed origins
+const allowedOrigins = [...frontendUrls, ...localUrls];
+
+console.log('\n✅ CORS Allowed Origins:');
+allowedOrigins.forEach(origin => console.log(`   - ${origin}`));
+
+// CORS middleware
+app.use(cors({
+    origin: function(origin, callback) {
+        // Allow requests with no origin (like mobile apps or curl)
+        if (!origin) return callback(null, true);
+        
+        if (allowedOrigins.indexOf(origin) !== -1) {
+            console.log(`✅ CORS allowed: ${origin}`);
+            callback(null, true);
+        } else {
+            console.log(`❌ CORS blocked origin: ${origin}`);
+            // In production, block unknown origins strictly
+            if (process.env.NODE_ENV === 'production') {
+                callback(new Error(`CORS policy: ${origin} not allowed`));
+            } else {
+                // In development, allow for testing
+                console.warn(`⚠️  CORS allowing unknown origin in development: ${origin}`);
+                callback(null, true);
+            }
+        }
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Cookie', 'X-Requested-With', 'X-Tavian-Token', 'Accept']
+}));
+
+app.options('*', cors());
+app.use(express.json({ limit: '10mb' }));
+app.use(cookieParser());
 
 // Data file path
 const DATA_FILE = path.join(__dirname, 'data.json');
@@ -25,7 +103,7 @@ if (!fs.existsSync(DATA_FILE)) {
     fs.writeFileSync(DATA_FILE, JSON.stringify({ users: [], nextId: 1, chatLogs: [] }, null, 2));
 }
 
-// ============= ADVANCED MODERATION SYSTEM (same as before) =============
+// ============= ADVANCED MODERATION SYSTEM =============
 const bannedWords = new Map([
     ['fuck', { severity: 10, contexts: ['sexual', 'insult', 'violent'] }],
     ['shit', { severity: 7, contexts: ['excretory', 'insult'] }],
@@ -207,29 +285,6 @@ function logChatMessage(username, originalMessage, filteredMessage, moderationRe
     writeData(data);
 }
 
-// ============= CORS CONFIGURATION - FIXED =============
-const allowedOrigins = [FRONTEND_URL, ...LOCAL_URLS];
-
-app.use(cors({
-    origin: function(origin, callback) {
-        // Allow requests with no origin (like mobile apps or curl)
-        if (!origin) return callback(null, true);
-        if (allowedOrigins.indexOf(origin) !== -1) {
-            callback(null, true);
-        } else {
-            console.log('CORS blocked origin:', origin);
-            callback(null, true); // Allow anyway for testing - remove in production
-        }
-    },
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Cookie', 'X-Requested-With', 'X-Tavian-Token', 'Accept']
-}));
-
-app.options('*', cors());
-app.use(express.json({ limit: '10mb' }));
-app.use(cookieParser());
-
 // Helper functions
 function readData() {
     const data = fs.readFileSync(DATA_FILE);
@@ -260,13 +315,13 @@ function getNextId() {
 
 function generateSecureToken(userId, username) {
     const payload = { id: userId, username: username, timestamp: Date.now(), nonce: Math.random().toString(36).substring(2, 15) };
-    return jwt.sign(payload, JWT_SECRET, { expiresIn: '30d' });
+    return jwt.sign(payload, finalJWTSecret, { expiresIn: '30d' });
 }
 
 function verifySecureToken(token) {
     if (!token) return null;
     try {
-        return jwt.verify(token, JWT_SECRET);
+        return jwt.verify(token, finalJWTSecret);
     } catch (error) {
         return null;
     }
@@ -278,7 +333,7 @@ async function verifyHCaptcha(hcaptchaResponse) {
         const https = require('https');
         const querystring = require('querystring');
         
-        const postData = querystring.stringify({ secret: HCAPTCHA_SECRET, response: hcaptchaResponse });
+        const postData = querystring.stringify({ secret: finalHCAPTCHASecret, response: hcaptchaResponse });
         const options = { hostname: 'hcaptcha.com', port: 443, path: '/siteverify', method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(postData) } };
         
         const result = await new Promise((resolve, reject) => {
@@ -334,7 +389,7 @@ function optionalAuth(req, res, next) {
     next();
 }
 
-// ============= FIXED COOKIE SETTINGS =============
+// Cookie settings
 function setAuthCookie(res, token) {
     const isProduction = process.env.NODE_ENV === 'production' || process.env.RENDER;
     
@@ -633,14 +688,26 @@ app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// CORS test endpoint (optional, remove in production)
+app.get('/api/cors-test', (req, res) => {
+    res.json({
+        message: 'CORS is configured correctly!',
+        yourOrigin: req.headers.origin || 'No origin header',
+        allowedOrigins: allowedOrigins,
+        timestamp: new Date().toISOString()
+    });
+});
+
 // Start server
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`\n========================================`);
     console.log(`🟣 Tavian Backend Server`);
     console.log(`========================================`);
     console.log(`📡 Running on: http://0.0.0.0:${PORT}`);
-    console.log(`🔗 Frontend URL: ${FRONTEND_URL}`);
-    console.log(`✅ CORS enabled for: ${FRONTEND_URL} and localhost`);
+    console.log(`🔗 Allowed Frontend URLs:`);
+    frontendUrls.forEach(url => console.log(`   - ${url}`));
+    console.log(`✅ Environment: ${process.env.NODE_ENV || 'development'}`);
     console.log(`✅ Cookie settings: ${process.env.NODE_ENV === 'production' ? 'Secure (HTTPS required)' : 'Development (HTTP allowed)'}`);
+    console.log(`✅ CORS: ${allowedOrigins.length} origins allowed`);
     console.log(`========================================\n`);
 });
