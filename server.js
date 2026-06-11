@@ -31,7 +31,7 @@ const finalJWTSecret = JWT_SECRET || (process.env.NODE_ENV !== 'production' ? "D
 const finalHCAPTCHASecret = HCAPTCHA_SECRET || (process.env.NODE_ENV !== 'production' ? "0x0000000000000000000000000000000000000000" : null);
 
 // ============= CORS CONFIGURATION - MULTIPLE FRONTENDS =============
-// Get frontend URLs from environment variables (supports multiple formats)
+// Get frontend URLs from environment variables
 let frontendUrls = [];
 
 // Method 1: Comma-separated list in a single variable
@@ -45,19 +45,40 @@ if (process.env.FRONTEND_URL_1) frontendUrls.push(process.env.FRONTEND_URL_1);
 if (process.env.FRONTEND_URL_2) frontendUrls.push(process.env.FRONTEND_URL_2);
 if (process.env.FRONTEND_URL_3) frontendUrls.push(process.env.FRONTEND_URL_3);
 
-// Remove duplicates
+// Add common GitHub Pages variations
+const githubPagesVariations = [
+    'https://defnot67kid-beep.github.io',
+    'https://defnot67kid-beep.github.io/',
+    'https://www.defnot67kid-beep.github.io',
+    'http://defnot67kid-beep.github.io',
+    'https://defnot67kid-beep.github.io/tavian',
+    'https://defnot67kid-beep.github.io/tavian/',
+    'https://tavian.netlify.app',
+    'https://tavian.netlify.app/'
+];
+
+frontendUrls.push(...githubPagesVariations);
+
+// Remove duplicates and filter out empty values
 frontendUrls = [...new Set(frontendUrls.filter(Boolean))];
 
 // Default fallbacks (development)
 if (frontendUrls.length === 0) {
     frontendUrls.push('https://defnot67kid-beep.github.io');
+    frontendUrls.push('https://tavian.netlify.app');
     if (process.env.NODE_ENV !== 'production') {
         frontendUrls.push('http://localhost:3000', 'http://localhost:5500', 'http://127.0.0.1:5500');
     }
 }
 
-// Local development URLs (always allowed in development)
-const localUrls = ['http://localhost:3000', 'http://localhost:5500', 'http://127.0.0.1:5500', 'http://localhost:8080', 'http://127.0.0.1:8080'];
+// Local development URLs (always allowed)
+const localUrls = [
+    'http://localhost:3000', 
+    'http://localhost:5500', 
+    'http://127.0.0.1:5500', 
+    'http://localhost:8080', 
+    'http://127.0.0.1:8080'
+];
 
 // Combine all allowed origins
 const allowedOrigins = [...frontendUrls, ...localUrls];
@@ -71,7 +92,11 @@ app.use(cors({
         // Allow requests with no origin (like mobile apps or curl)
         if (!origin) return callback(null, true);
         
-        if (allowedOrigins.indexOf(origin) !== -1) {
+        // Normalize origin by removing trailing slash
+        let normalizedOrigin = origin.replace(/\/$/, '');
+        
+        // Check if origin is allowed
+        if (allowedOrigins.indexOf(normalizedOrigin) !== -1) {
             console.log(`✅ CORS allowed: ${origin}`);
             callback(null, true);
         } else {
@@ -688,7 +713,7 @@ app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// CORS test endpoint (optional, remove in production)
+// CORS test endpoint (useful for debugging)
 app.get('/api/cors-test', (req, res) => {
     res.json({
         message: 'CORS is configured correctly!',
